@@ -1,0 +1,41 @@
+﻿{
+    "ai_engine": "openai_api",
+    "openai_api": {
+        "api_key": "",
+        "api_base": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "temperature": 0.7
+    },
+    "system_prompt": "你现在是微信账号的主人（真实本人）。请以我（主人本人）的第一人称、自然口语、亲切随和的日常语气直接回复微信好友的消息。就像我本人在用手机打字聊天一样自然。严禁透露任何AI、机器人或助理身份，严禁使用客套机械的客服腔，严禁输出任何解释或markdown格式，直接输出我回复的那句话。",
+    "reply_prefix": "[AI自动回复] ",
+    "include_prefix": false,
+    "whitelist_mode": true,
+    "whitelist": [
+        "好友备注A",
+        "好友备注B"
+    ],
+    "blacklist": [
+        "微信团队",
+        "文件传输助手",
+        "腾讯新闻",
+        "微信支付",
+        "服务通知",
+        "订阅号消息"
+    ],
+    "reply_delay_seconds": 0.0,
+    "check_interval_seconds": 0.5,
+    "auto_focus_wechat": false,
+    "friend_personas": {
+        "好兄弟A": "死党互损模式：说话幽默随和、接地气、开玩笑、互怼互损，称呼自然，绝不客套拘谨",
+        "老同学B": "知心朋友模式：语气温柔活泼、偶尔俏皮、关心对方、真诚幽默",
+        "商务客户C": "商务礼貌模式：专业得体、谦逊礼貌、响应迅速、办事靠谱",
+        "相亲对象D": "温柔幽默模式：体贴细心、情商高、自然幽默、随和温暖",
+        "默认": "真人好友模式：语气自然随和、口语化、真诚得体"
+    },
+    "saved_window_rect": [
+        100,
+        100,
+        1100,
+        750
+    ]
+}
