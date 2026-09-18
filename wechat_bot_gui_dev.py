@@ -190,8 +190,15 @@ class WeChatBotGUI(tk.Tk):
                 "订阅号消息"
             ],
             "reply_delay_seconds": 0.0,
-            "check_interval_seconds": 1.0,
-            "auto_focus_wechat": False
+            "check_interval_seconds": 0.8,
+            "auto_focus_wechat": False,
+            "ignored_keywords": [
+                "按住鼠标",
+                "语音输入文字",
+                "按住说话",
+                "按Enter发送",
+                "发送(S)"
+            ]
         }
         if os.path.exists(CONFIG_FILE):
             try:
@@ -282,12 +289,9 @@ class WeChatBotGUI(tk.Tk):
         engine_box.pack(fill=tk.X, pady=4)
 
         ttk.Label(engine_box, text="AI 响应引擎:", font=("微软雅黑", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
-        self.var_engine = tk.StringVar(value=self.config_data.get("ai_engine", "openai_api"))
+        self.var_engine = tk.StringVar(value="openai_api")
 
-        rb1 = ttk.Radiobutton(engine_box, text="🧠 本地 Antigravity Agent 大脑 (无需额外 Key，深度推理)", variable=self.var_engine, value="agent_api", command=self.on_engine_change)
-        rb1.pack(side=tk.LEFT, padx=(0, 15))
-
-        rb2 = ttk.Radiobutton(engine_box, text="🌐 云端 / 本地大模型 (DeepSeek / OpenAI / Kimi / 通义千问等 API)", variable=self.var_engine, value="openai_api", command=self.on_engine_change)
+        rb2 = ttk.Radiobutton(engine_box, text="🌐 大模型通用 API (DeepSeek / OpenAI / Kimi / Ollama 等兼容接口)", variable=self.var_engine, value="openai_api", command=self.on_engine_change)
         rb2.pack(side=tk.LEFT)
 
         # OpenAI Group
