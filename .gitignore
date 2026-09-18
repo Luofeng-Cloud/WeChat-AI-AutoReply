@@ -1,4 +1,4 @@
-﻿# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *.class
@@ -35,7 +35,7 @@ MANIFEST
 *.7z
 *.rar
 
-# User specific runtime & sensitive configuration (CRITICAL: 严格杜绝凭据与好友隐私外泄)
+# User specific runtime & sensitive configuration
 wechat_config_dev.json
 wechat_config.json
 wechat_convo_map.json

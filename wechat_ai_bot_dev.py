@@ -357,8 +357,9 @@ def has_red_badge_by_text_anchor(arr, text_box, layout):
     if patch.size == 0:
         return False
         
-    # 微信原生高纯度亮红色判定 (红像素点数 >= 15)
-    red_mask = (patch[:, :, 0] >= 200) & (patch[:, :, 1] <= 110) & (patch[:, :, 2] <= 110) & (patch[:, :, 0] > patch[:, :, 1] + 65)
+    # 微信原生高纯度亮红色判定 (红像素点数 >= 15，转 int 彻底杜绝 uint8 回绕溢出)
+    pr, pg, pb = patch[:, :, 0].astype(int), patch[:, :, 1].astype(int), patch[:, :, 2].astype(int)
+    red_mask = (pr >= 200) & (pg <= 110) & (pb <= 110) & (pr > pg + 65)
     return np.sum(red_mask) >= 15
 
 def extract_active_chat_title(res, layout):
@@ -387,12 +388,23 @@ def extract_active_chat_title(res, layout):
 # =============================================================================
 # 5. CHROMATIC BUBBLE PARSER & MULTI-LINE AGGREGATION
 # =============================================================================
-def parse_chat_bubbles_chromatic(res, img_rgb, layout):
+BUILTIN_IGNORED_KEYWORDS = [
+    "按住鼠标", "语音输入文字", "按住说话", "按Enter发送", "按Ctrl+Enter发送", "发送(S)"
+]
+
+def parse_chat_bubbles_chromatic(res, img_rgb, layout, ignored_keywords=None):
     arr = np.array(img_rgb)
     W, H = img_rgb.size
     chat_start_x = layout["chat_start_x"]
     header_h = layout["header_h"]
     input_h = layout["input_h"]
+    
+    # 汇总系统内置提示词 + 用户自定义屏蔽词
+    all_ignored = list(BUILTIN_IGNORED_KEYWORDS)
+    if ignored_keywords and isinstance(ignored_keywords, list):
+        for kw in ignored_keywords:
+            if kw and str(kw).strip() and str(kw).strip() not in all_ignored:
+                all_ignored.append(str(kw).strip())
     
     raw_lines = []
     for b, txt, sc in (res or []):
@@ -400,6 +412,10 @@ def parse_chat_bubbles_chromatic(res, img_rgb, layout):
         cy = (b[0][1] + b[2][1]) / 2.0
         c_clean = txt.strip()
         if not c_clean:
+            continue
+            
+        # 排除系统原生 UI 提示词与屏蔽词（如鼠标悬停输入框时弹出的“按住鼠标 语音输入文字”等）
+        if any(bad in c_clean for bad in all_ignored):
             continue
             
         # 排除顶栏乱码与非聊天文字 (纯数字如 666, 1, 520, 21 等 100% 完整保留支持)
@@ -424,7 +440,8 @@ def parse_chat_bubbles_chromatic(res, img_rgb, layout):
             max_y = min(H, int(max(pt[1] for pt in b) + 8))
             
             patch = arr[min_y:max_y, min_x:max_x]
-            green_mask = (patch[:, :, 1] > patch[:, :, 0] + 18) & (patch[:, :, 1] > patch[:, :, 2] + 18) & (patch[:, :, 1] > 45)
+            pr, pg, pb = patch[:, :, 0].astype(int), patch[:, :, 1].astype(int), patch[:, :, 2].astype(int)
+            green_mask = (pg > pr + 18) & (pg > pb + 18) & (pg > 45)
             has_green_bg = np.sum(green_mask) > 15
             
             box_left = min(pt[0] for pt in b)
@@ -559,8 +576,9 @@ def verify_outgoing_bubble_success(hwnd, layout):
         if patch.size == 0:
             return False
             
-        # 微信特征绿底色判定 (G 高于 R 和 B 至少 18)
-        green_mask = (patch[:, :, 1] > patch[:, :, 0] + 18) & (patch[:, :, 1] > patch[:, :, 2] + 18) & (patch[:, :, 1] > 45)
+        # 微信特征绿底色判定 (转 int 杜绝浅色背景回绕溢出)
+        pr, pg, pb = patch[:, :, 0].astype(int), patch[:, :, 1].astype(int), patch[:, :, 2].astype(int)
+        green_mask = (pg > pr + 18) & (pg > pb + 18) & (pg > 45)
         return np.sum(green_mask) >= 18
     except Exception:
         return False
@@ -750,7 +768,8 @@ def scan_and_reply_wechat(hwnd):
     curr_chat_hash = hashlib.md5(chat_patch.tobytes()).hexdigest()
     
     sidebar_patch = arr_wechat[:, :layout["chat_start_x"]]
-    red_mask = (sidebar_patch[:, :, 0] >= 190) & (sidebar_patch[:, :, 1] <= 115) & (sidebar_patch[:, :, 2] <= 115) & (sidebar_patch[:, :, 0] > sidebar_patch[:, :, 1] + 55)
+    sr, sg, sb = sidebar_patch[:, :, 0].astype(int), sidebar_patch[:, :, 1].astype(int), sidebar_patch[:, :, 2].astype(int)
+    red_mask = (sr >= 190) & (sg <= 115) & (sb <= 115) & (sr > sg + 55)
     has_red_pixels = np.sum(red_mask) >= 15
     
     curr_sidebar_hash = hashlib.md5(sidebar_patch.tobytes()).hexdigest()
@@ -784,6 +803,7 @@ def scan_and_reply_wechat(hwnd):
     whitelist_mode = cfg.get("whitelist_mode", True)
     whitelist = cfg.get("whitelist", [])
     blacklist = cfg.get("blacklist", [])
+    ignored_keywords = cfg.get("ignored_keywords", [])
     
     sidebar_w = layout["sidebar_w"]
     chat_start_x = layout["chat_start_x"]
@@ -808,11 +828,12 @@ def scan_and_reply_wechat(hwnd):
         if any(b_name in text_clean for b_name in blacklist if b_name.strip()):
             continue
             
-        # 统计该行绿色像素强度 (寻找真正被激活的会话)
+        # 统计该行绿色像素强度 (寻找真正被激活的会话，转 int 杜绝浅色背景回绕溢出)
         min_y = max(0, int(cy - 18))
         max_y = min(H, int(cy + 18))
         patch = arr_wechat[min_y:max_y, sidebar_w:chat_start_x]
-        green_pixels = np.sum((patch[:, :, 1] > patch[:, :, 0] + 25) & (patch[:, :, 1] > patch[:, :, 2] + 25) & (patch[:, :, 1] > 80))
+        pr, pg, pb = patch[:, :, 0].astype(int), patch[:, :, 1].astype(int), patch[:, :, 2].astype(int)
+        green_pixels = np.sum((pg > pr + 25) & (pg > pb + 25) & (pg > 80))
         
         if green_pixels > 1200 and green_pixels > max_green_count:
             max_green_count = green_pixels
@@ -846,46 +867,37 @@ def scan_and_reply_wechat(hwnd):
             current_active_target = left_target
     
     if current_active_target:
-        # 右侧主聊天区实行 100% 原画高清切片 OCR，确保单标点 ?、、！ 与短字符 100% 捕获
-        crop_x1 = max(330, int(chat_start_x + 10))
-        crop_y1 = max(0, int(layout["header_h"] + 10))
-        crop_x2 = min(W, int(W - 5))
-        crop_y2 = min(H, int(H - int(layout["input_h"] * 0.70)))
-        
-        if crop_x2 > crop_x1 and crop_y2 > crop_y1:
-            img_chat_crop = img_wechat.crop((crop_x1, crop_y1, crop_x2, crop_y2))
-            res_chat_raw, _ = ocr_engine(img_chat_crop)
-            res_chat = []
-            for b, txt, sc in (res_chat_raw or []):
-                mapped_box = [[pt[0] + crop_x1, pt[1] + crop_y1] for pt in b]
-                res_chat.append((mapped_box, txt, sc))
-        else:
-            res_chat = res
-            
-        chat_bubbles = parse_chat_bubbles_chromatic(res_chat, img_wechat, layout)
+        chat_bubbles = parse_chat_bubbles_chromatic(res, img_wechat, layout, ignored_keywords)
         if chat_bubbles:
             pending_bubbles, combined_text = extract_pending_incoming_messages(chat_bubbles)
             # 🔥 第一道铁闸：只要当前好友有未回复新消息，绝对锁定在当前窗口就地秒回！
             if pending_bubbles and combined_text:
-                current_sig = (current_active_target, combined_text)
+                current_sig = (current_active_target, combined_text, int(pending_bubbles[-1]['last_y']), len(chat_bubbles))
                 if LAST_PROCESSED_SIGNATURE.get(current_active_target) != current_sig:
                     
-                    # 🌟 智能连发聚合缓冲 (1.6 秒):
-                    # 收到第 1 条消息后短暂等待 1.6 秒，若对方还在连续发送后续短句，一并聚合！
-                    time.sleep(1.6)
+                    # 🌟 极速动态像素沉降判定 (Dynamic Pixel Settling):
+                    # 短暂等待 0.35 秒 (人类打字发句最小停顿)，若右侧气泡像素无变动，立即判定单句发送完毕，0秒多余等待直接交由 AI！
+                    # 若检测到右侧像素哈希发生改变（连发新气泡），则等待 0.15 秒排版沉降后增量 OCR 聚合全部短句！
+                    time.sleep(0.35)
                     img_latest, _, _ = grab_wechat_window(hwnd)
                     if img_latest:
-                        img_chat_crop_lat = img_latest.crop((crop_x1, crop_y1, crop_x2, crop_y2))
-                        res_lat_raw, _ = ocr_engine(img_chat_crop_lat)
-                        res_lat = []
-                        for b, txt, sc in (res_lat_raw or []):
-                            res_lat.append(([[pt[0] + crop_x1, pt[1] + crop_y1] for pt in b], txt, sc))
-                        chat_bubbles_lat = parse_chat_bubbles_chromatic(res_lat, img_latest, layout)
-                        pending_lat, combined_lat = extract_pending_incoming_messages(chat_bubbles_lat)
-                        if pending_lat and combined_lat:
-                            pending_bubbles = pending_lat
-                            combined_text = combined_lat
-                            current_sig = (current_active_target, combined_text)
+                        latest_patch = np.array(img_latest)[crop_y1:crop_y2, crop_x1:crop_x2]
+                        new_chat_hash = hashlib.md5(latest_patch.tobytes()).hexdigest()
+                        if new_chat_hash != curr_chat_hash:
+                            time.sleep(0.15) # 等待微信 Qt5 文字渲染排版彻底完成
+                            img_settled, _, _ = grab_wechat_window(hwnd)
+                            if img_settled:
+                                img_chat_crop_lat = img_settled.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+                                res_lat_raw, _ = ocr_engine(img_chat_crop_lat)
+                                res_lat = []
+                                for b, txt, sc in (res_lat_raw or []):
+                                    res_lat.append(([[pt[0] + crop_x1, pt[1] + crop_y1] for pt in b], txt, sc))
+                                chat_bubbles_lat = parse_chat_bubbles_chromatic(res_lat, img_settled, layout, ignored_keywords)
+                                pending_lat, combined_lat = extract_pending_incoming_messages(chat_bubbles_lat)
+                                if pending_lat and combined_lat:
+                                    pending_bubbles = pending_lat
+                                    combined_text = combined_lat
+                                    current_sig = (current_active_target, combined_text, int(pending_bubbles[-1]['last_y']), len(chat_bubbles_lat))
                             
                     LAST_PROCESSED_SIGNATURE[current_active_target] = current_sig
                     
@@ -961,10 +973,10 @@ def main_loop():
             if hwnd:
                 scan_and_reply_wechat(hwnd)
             cfg = load_config()
-            interval = float(cfg.get("check_interval_seconds", 2.0))
+            interval = float(cfg.get("check_interval_seconds", 0.8))
             time.sleep(interval)
         except Exception as e:
-            time.sleep(2.0)
+            time.sleep(1.0)
 
 if __name__ == "__main__":
     main_loop()
