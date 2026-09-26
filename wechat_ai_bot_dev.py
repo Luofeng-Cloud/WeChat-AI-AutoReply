@@ -118,9 +118,9 @@ def load_config():
         "whitelist": ["好友A", "好友B"],
         "blacklist": ["文件传输助手", "微信团队", "订阅号", "公众号", "服务号"],
         "ai_engine": "openai_api",
-        "api_url": "https://api.deepseek.com/v1/chat/completions",
+        "api_url": "https://api.xiaomimimo.com/v1/chat/completions",
         "api_key": "",
-        "api_model": "deepseek-chat",
+        "api_model": "mimo-v2.6-flash",
         "friend_personas": {}
     }
 
@@ -520,10 +520,10 @@ def generate_ai_reply(sender, message_content):
     )
     
     oa = cfg.get("openai_api", {})
-    api_base = cfg.get("api_url") or oa.get("api_base", "https://api.deepseek.com/v1")
+    api_base = cfg.get("api_url") or oa.get("api_base", "https://api.xiaomimimo.com/v1")
     url = api_base if api_base.endswith("/chat/completions") else f"{api_base.rstrip('/')}/chat/completions"
     key = cfg.get("api_key") or oa.get("api_key", "")
-    model = cfg.get("api_model") or oa.get("model", "deepseek-chat")
+    model = cfg.get("api_model") or oa.get("model", "mimo-v2.6-flash")
     
     if key and url:
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
