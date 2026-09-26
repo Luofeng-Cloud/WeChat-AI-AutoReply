@@ -78,37 +78,37 @@
 ### 方式二：源码运行与二次开发（开发者）
 
 #### 1. 克隆仓库
-`ash
+```bash
 git clone https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply.git
 cd WeChat-AI-AutoReply
-`
+```
 
 #### 2. 安装依赖
-`ash
+```bash
 pip install -r requirements.txt
-`
+```
 
 #### 3. 配置文件准备
 复制配置模板文件：
-`ash
+```bash
 copy wechat_config.example.json wechat_config_dev.json
-`
-在 wechat_config_dev.json 中配置您的 pi_key、pi_base 以及好友白名单 whitelist。
+```
+在 `wechat_config_dev.json` 中配置您的 `api_key`、`api_base` 以及好友白名单 `whitelist`。
 
 #### 4. 运行可视化控制中心
-`ash
+```bash
 python wechat_bot_gui_dev.py
-`
+```
 或直接无界面静默守护运行核心：
-`ash
+```bash
 python wechat_ai_bot_dev.py
-`
+```
 
 ---
 
-## ⚙️ 核心配置说明 (wechat_config.json)
+## ⚙️ 核心配置说明 (`wechat_config.json`)
 
-`json
+```json
 {
     "ai_engine": "openai_api",
     "openai_api": {
@@ -128,13 +128,13 @@ python wechat_ai_bot_dev.py
     },
     "check_interval_seconds": 0.5
 }
-`
+```
 
 ---
 
 ## 📁 仓库结构
 
-`
+```text
 WeChat-AI-AutoReply/
 ├── wechat_ai_bot_dev.py          # 后台常驻感知与调度核心 (OCR+Win32消息路由+离屏抓图)
 ├── wechat_bot_gui_dev.py         # 现代化控制中心 GUI (Tkinter + 实时日志 + 托盘控制)
@@ -145,7 +145,7 @@ WeChat-AI-AutoReply/
 ├── .gitignore                    # 工业级排除规则 (严防私密配置与日志外泄)
 ├── LICENSE                       # MIT 开源许可证
 └── README.md                     # 项目说明文档
-`
+```
 
 ---
 
