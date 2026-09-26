@@ -172,8 +172,8 @@ class WeChatBotGUI(tk.Tk):
             "ai_engine": "openai_api",
             "openai_api": {
                 "api_key": "",
-                "api_base": "https://api.deepseek.com/v1",
-                "model": "deepseek-chat",
+                "api_base": "https://api.xiaomimimo.com/v1",
+                "model": "mimo-v2.6-flash",
                 "temperature": 0.7
             },
             "system_prompt": DEFAULT_PROMPTS["🌟 真人日常 (默认)"],
@@ -447,11 +447,11 @@ class WeChatBotGUI(tk.Tk):
         c = self.config_data
         oa = c.get("openai_api", {})
         self.ent_api_base.delete(0, tk.END)
-        self.ent_api_base.insert(0, oa.get("api_base", "https://api.deepseek.com/v1"))
+        self.ent_api_base.insert(0, oa.get("api_base", "https://api.xiaomimimo.com/v1"))
         self.ent_api_key.delete(0, tk.END)
         self.ent_api_key.insert(0, oa.get("api_key", ""))
         self.ent_model.delete(0, tk.END)
-        self.ent_model.insert(0, oa.get("model", "deepseek-chat"))
+        self.ent_model.insert(0, oa.get("model", "mimo-v2.6-flash"))
 
         self.var_prefix.set(c.get("include_prefix", False))
         self.ent_prefix.delete(0, tk.END)
@@ -553,8 +553,8 @@ class WeChatBotGUI(tk.Tk):
         t0 = time.time()
         oa = self.config_data.get("openai_api", {})
         api_key = oa.get("api_key", "").strip()
-        api_base = oa.get("api_base", "https://api.deepseek.com/v1").rstrip("/")
-        model = oa.get("model", "deepseek-chat")
+        api_base = oa.get("api_base", "https://api.xiaomimimo.com/v1").rstrip("/")
+        model = oa.get("model", "mimo-v2.6-flash")
         
         if not api_key:
             self.txt_test_out.delete("1.0", tk.END)

@@ -113,8 +113,8 @@ python wechat_ai_bot_dev.py
     "ai_engine": "openai_api",
     "openai_api": {
         "api_key": "sk-your-key-here",
-        "api_base": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
+        "api_base": "https://api.xiaomimimo.com/v1",
+        "model": "mimo-v2.6-flash",
         "temperature": 0.7
     },
     "whitelist_mode": true,

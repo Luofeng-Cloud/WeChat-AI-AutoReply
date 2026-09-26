@@ -2,8 +2,8 @@
     "ai_engine": "openai_api",
     "openai_api": {
         "api_key": "",
-        "api_base": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
+        "api_base": "https://api.xiaomimimo.com/v1",
+        "model": "mimo-v2.6-flash",
         "temperature": 0.7
     },
     "system_prompt": "你现在是微信账号的主人（真实本人）。请以我（主人本人）的第一人称、自然口语、亲切随和的日常语气直接回复微信好友的消息。就像我本人在用手机打字聊天一样自然。严禁透露任何AI、机器人或助理身份，严禁使用客套机械的客服腔，严禁输出任何解释或markdown格式，直接输出我回复的那句话。",
