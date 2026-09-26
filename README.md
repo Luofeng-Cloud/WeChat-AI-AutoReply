@@ -1,9 +1,9 @@
 <div align="center">
 
 # 🤖 WeChat-AI-AutoReply
-### 微信 AI 智能自动回复伴侣 (Zero-Mouse & Off-Screen Edition)
+### 微信 AI 自动回复 (Zero-Mouse & Off-Screen Edition)
 
-**基于视觉感知与 Win32 无痕挂载的 PC 微信 AI 智能伴侣**  
+**基于视觉感知与 Win32 无痕挂载的 PC 微信 AI 自动回复**  
 *100% 物理鼠标 0 移动 · 虚拟离屏隐形挂载 · 毫秒级视觉双轨感知 · 白名单硬核物理防火墙*
 
 <p align="center">
@@ -22,7 +22,7 @@
 
 ### 📦 Windows 用户一键体验入口
 
-[![Download Release](https://img.shields.io/badge/🚀%20一键下载-Windows%20正式安装包%20(v1.0.1)-07C160?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases/latest/download/WeChat-AI-AutoReply-Setup-v1.0.1.exe)
+[![Download Release](https://img.shields.io/badge/🚀%20一键下载-Windows%20正式安装包%20(v1.0.1)-07C160?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases/latest/download/WeChat-AI-AutoReply_Setup.exe)
 *(无需配置 Python 环境，下载 EXE 安装包双击即可秒级开启！)*
 
 </div>
