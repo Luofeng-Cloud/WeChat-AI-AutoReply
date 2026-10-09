@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import time
+import re
 import subprocess
 import tempfile
 import threading
@@ -177,6 +178,8 @@ class WeChatBotGUI(tk.Tk):
                 "temperature": 0.7
             },
             "system_prompt": DEFAULT_PROMPTS["🌟 真人日常 (默认)"],
+            "prompt_preset": "🌟 真人日常 (默认)",
+            "custom_prompt": DEFAULT_PROMPTS["✏️ 自由定制"],
             "reply_prefix": "[AI自动回复] ",
             "include_prefix": False,
             "whitelist_mode": True,
@@ -373,6 +376,7 @@ class WeChatBotGUI(tk.Tk):
 
         self.txt_prompt = scrolledtext.ScrolledText(self.tab_prompt, wrap=tk.WORD, height=14, font=("微软雅黑", 9))
         self.txt_prompt.pack(fill=tk.BOTH, expand=True, pady=4)
+        self.txt_prompt.bind("<KeyRelease>", self.on_prompt_text_change)
 
         btn_p = ttk.Frame(self.tab_prompt)
         btn_p.pack(fill=tk.X, pady=8)
@@ -386,6 +390,7 @@ class WeChatBotGUI(tk.Tk):
         self.var_wl_mode = tk.BooleanVar(value=True)
         self.chk_wl = ttk.Checkbutton(top_w, text="🔒 开启白名单模式（开启后【仅回复】白名单中的指定好友，未在名单者不回复）", variable=self.var_wl_mode)
         self.chk_wl.pack(side=tk.LEFT)
+        ttk.Label(top_w, text="⚠️ 关闭白名单模式后将回复所有单人好友（群聊/黑名单除外，群聊识别为启发式无法100%拦截），建议仅测试时使用", foreground="#c0392b", font=("微软雅黑", 8)).pack(side=tk.LEFT, padx=12)
 
         mid_w = ttk.Frame(self.tab_whitelist)
         mid_w.pack(fill=tk.BOTH, expand=True, pady=4)
@@ -447,19 +452,42 @@ class WeChatBotGUI(tk.Tk):
         c = self.config_data
         oa = c.get("openai_api", {})
         self.ent_api_base.delete(0, tk.END)
-        self.ent_api_base.insert(0, oa.get("api_base", "https://api.xiaomimimo.com/v1"))
+        self.ent_api_base.insert(0, oa.get("api_base") or "https://api.xiaomimimo.com/v1")
         self.ent_api_key.delete(0, tk.END)
-        self.ent_api_key.insert(0, oa.get("api_key", ""))
+        self.ent_api_key.insert(0, oa.get("api_key") or "")
         self.ent_model.delete(0, tk.END)
-        self.ent_model.insert(0, oa.get("model", "mimo-v2.6-flash"))
+        self.ent_model.insert(0, oa.get("model") or "mimo-v2.6-flash")
 
         self.var_prefix.set(c.get("include_prefix", False))
         self.ent_prefix.delete(0, tk.END)
-        self.ent_prefix.insert(0, c.get("reply_prefix", "[AI自动回复] "))
-        self.spin_delay.set(c.get("reply_delay_seconds", 0.0))
+        self.ent_prefix.insert(0, c.get("reply_prefix") or "[AI自动回复] ")
+        self.spin_delay.set(c.get("reply_delay_seconds") or 0.0)
 
+        sys_prompt = (c.get("system_prompt") or DEFAULT_PROMPTS["🌟 真人日常 (默认)"]).strip()
         self.txt_prompt.delete("1.0", tk.END)
-        self.txt_prompt.insert(tk.END, c.get("system_prompt", DEFAULT_PROMPTS["🌟 真人日常 (默认)"]))
+        self.txt_prompt.insert(tk.END, sys_prompt)
+
+        # 准确还原预设状态与下拉框选中项
+        saved_preset = c.get("prompt_preset", "").strip()
+        if saved_preset and saved_preset in DEFAULT_PROMPTS:
+            self.cbo_presets.set(saved_preset)
+        else:
+            # 若未显式记录 preset，根据 system_prompt 内容智能反查
+            matched = None
+            for k, v in DEFAULT_PROMPTS.items():
+                if k != "✏️ 自由定制" and v.strip() == sys_prompt:
+                    matched = k
+                    break
+            if matched:
+                self.cbo_presets.set(matched)
+            else:
+                self.cbo_presets.set("✏️ 自由定制")
+        
+        # 确保自由定制有备份值
+        if self.cbo_presets.get() == "✏️ 自由定制" and sys_prompt:
+            self.config_data["custom_prompt"] = sys_prompt
+        elif "custom_prompt" not in self.config_data:
+            self.config_data["custom_prompt"] = c.get("custom_prompt", DEFAULT_PROMPTS["✏️ 自由定制"])
 
         self.var_wl_mode.set(c.get("whitelist_mode", True))
         self.listbox_wl.delete(0, tk.END)
@@ -485,7 +513,13 @@ class WeChatBotGUI(tk.Tk):
         except Exception:
             self.config_data["reply_delay_seconds"] = 0.0
 
-        self.config_data["system_prompt"] = self.txt_prompt.get("1.0", tk.END).strip()
+        cur_prompt = self.txt_prompt.get("1.0", tk.END).strip()
+        cur_preset = self.cbo_presets.get()
+        self.config_data["system_prompt"] = cur_prompt
+        self.config_data["prompt_preset"] = cur_preset
+        if cur_preset == "✏️ 自由定制" or cur_prompt not in DEFAULT_PROMPTS.values():
+            self.config_data["custom_prompt"] = cur_prompt
+
         self.config_data["whitelist_mode"] = self.var_wl_mode.get()
         self.config_data["whitelist"] = list(self.listbox_wl.get(0, tk.END))
         self.config_data["blacklist"] = list(self.listbox_bl.get(0, tk.END))
@@ -494,9 +528,33 @@ class WeChatBotGUI(tk.Tk):
             if show_msg:
                 messagebox.showinfo("保存成功", "✅ 配置已成功保存！后台 AI 守护进程将自动应用最新设置。")
 
+    def on_prompt_text_change(self, event=None):
+        if event and event.keysym in ("Control_L", "Control_R", "Shift_L", "Shift_R", "Alt_L", "Alt_R", "Caps_Lock", "Left", "Right", "Up", "Down", "Home", "End", "Prior", "Next"):
+            return
+        cur_text = self.txt_prompt.get("1.0", tk.END).strip()
+        self.config_data["custom_prompt"] = cur_text
+        if self.cbo_presets.get() != "✏️ 自由定制":
+            cur_preset = self.cbo_presets.get()
+            if cur_preset in DEFAULT_PROMPTS and cur_text != DEFAULT_PROMPTS[cur_preset].strip():
+                self.cbo_presets.set("✏️ 自由定制")
+
     def on_preset_change(self, event=None):
         name = self.cbo_presets.get()
-        if name in DEFAULT_PROMPTS:
+        cur_text = self.txt_prompt.get("1.0", tk.END).strip()
+        
+        # 若当前正在编辑自定义内容，先自动备份，防止被其它标准预设覆盖冲掉
+        if cur_text and cur_text not in DEFAULT_PROMPTS.values():
+            self.config_data["custom_prompt"] = cur_text
+
+        if name == "✏️ 自由定制":
+            # 优先恢复用户之前的自定义 Prompt，绝不暴力覆盖为固定模板
+            custom_text = self.config_data.get("custom_prompt", "").strip()
+            if not custom_text:
+                custom_text = cur_text if (cur_text and cur_text not in DEFAULT_PROMPTS.values()) else DEFAULT_PROMPTS["✏️ 自由定制"]
+            self.txt_prompt.delete("1.0", tk.END)
+            self.txt_prompt.insert(tk.END, custom_text)
+            self.config_data["custom_prompt"] = custom_text
+        elif name in DEFAULT_PROMPTS:
             self.txt_prompt.delete("1.0", tk.END)
             self.txt_prompt.insert(tk.END, DEFAULT_PROMPTS[name])
 
@@ -551,19 +609,25 @@ class WeChatBotGUI(tk.Tk):
         self.update()
 
         t0 = time.time()
-        oa = self.config_data.get("openai_api", {})
-        api_key = oa.get("api_key", "").strip()
-        api_base = oa.get("api_base", "https://api.xiaomimimo.com/v1").rstrip("/")
-        model = oa.get("model", "mimo-v2.6-flash")
+        oa = self.config_data.get("openai_api") or {}
+        api_key = (oa.get("api_key") or "").strip()
+        api_base = (oa.get("api_base") or "https://api.xiaomimimo.com/v1").rstrip("/")
+        model = oa.get("model") or "mimo-v2.6-flash"
         
         if not api_key:
             self.txt_test_out.delete("1.0", tk.END)
             self.txt_test_out.insert(tk.END, "❌ 请先在【AI 引擎设置】中填入有效的 API Key！")
             return
             
-        url = f"{api_base}/chat/completions"
+        url = api_base if api_base.endswith("/chat/completions") else f"{api_base}/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        prompt = self.config_data.get("system_prompt", DEFAULT_PROMPTS["真人日常"])
+        base_prompt = self.config_data.get("system_prompt") or DEFAULT_PROMPTS.get("🌟 真人日常 (默认)", "")
+        now_time = time.strftime("%H:%M")
+        prompt = (
+            f"{base_prompt}\n"
+            f"【当前互动好友】：好友【{sender}】，当前时间{now_time}。\n"
+            f"【对话规则】：直接输出发给对方的一句中文，口语化自然、简练得体。严禁括号描写心理活动，严禁透露AI身份。"
+        )
         payload = {
             "model": model,
             "messages": [
@@ -576,7 +640,11 @@ class WeChatBotGUI(tk.Tk):
             res = requests.post(url, headers=headers, json=payload, timeout=12)
             if res.status_code == 200:
                 data = res.json()
-                reply = data["choices"][0]["message"]["content"].strip()
+                raw_reply = data["choices"][0]["message"]["content"]
+                reply = re.sub(r'<think>.*?</think>', '', raw_reply, flags=re.DOTALL)
+                reply = re.sub(r'^[（(][^）)]*[）)]\s*', '', reply)
+                reply = re.sub(r'\s*[（(][^）)]*[）)]$', '', reply)
+                reply = reply.strip().strip('"').strip('“').strip('”')
                 dur = round(time.time() - t0, 2)
                 self.txt_test_out.delete("1.0", tk.END)
                 self.txt_test_out.insert(tk.END, f"{reply}\n\n[⏱️ 耗时: {dur} 秒]")
@@ -753,6 +821,7 @@ class WeChatBotGUI(tk.Tk):
         try:
             with open(LOG_FILE, "w", encoding="utf-8") as f:
                 f.write("")
+            self.log_pos = 0
             self.txt_log.delete("1.0", tk.END)
         except Exception:
             pass
@@ -766,7 +835,7 @@ class WeChatBotGUI(tk.Tk):
     def create_desktop_shortcut(self):
         try:
             desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-            shortcut_path = os.path.join(desktop, "微信AI自动回复.lnk")
+            shortcut_path = os.path.join(desktop, "微信AI自动回复_开发版.lnk")
             exe_path = os.path.join(WORKSPACE_DIR, "微信AI自动回复.exe")
             if not os.path.exists(exe_path):
                 exe_path = os.path.join(WORKSPACE_DIR, "微信AI回复(开发版).exe")
@@ -811,7 +880,7 @@ class WeChatBotGUI(tk.Tk):
                     os.remove(tmp_vbs)
                 except Exception:
                     pass
-            messagebox.showinfo("创建成功", f"🎉 已成功在桌面创建快捷方式！\n\n快捷方式: 微信AI自动回复.lnk")
+            messagebox.showinfo("创建成功", f"🎉 已成功在桌面创建快捷方式！\n\n快捷方式: {os.path.basename(shortcut_path)}")
         except Exception as e:
             messagebox.showerror("错误", f"创建快捷方式失败: {e}")
 
@@ -848,6 +917,9 @@ class WeChatBotGUI(tk.Tk):
                 new_logs = ""
                 if os.path.exists(LOG_FILE):
                     try:
+                        file_size = os.path.getsize(LOG_FILE)
+                        if file_size < self.log_pos:
+                            self.log_pos = 0
                         with open(LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
                             f.seek(self.log_pos)
                             new_logs = f.read()
@@ -855,7 +927,12 @@ class WeChatBotGUI(tk.Tk):
                     except Exception:
                         pass
 
-                self.after(0, lambda wt=wx_text, wc=wx_color, bt=bot_text, bc=bot_color, nl=new_logs: self._update_ui_state(wt, wc, bt, bc, nl))
+                if not self.is_monitoring:
+                    break
+                try:
+                    self.after(0, lambda wt=wx_text, wc=wx_color, bt=bot_text, bc=bot_color, nl=new_logs: self._update_ui_state(wt, wc, bt, bc, nl))
+                except Exception:
+                    pass
                 time.sleep(1.5)
 
         t = threading.Thread(target=monitor_loop, daemon=True)

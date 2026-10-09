@@ -29,9 +29,11 @@ def kill_wechat_bot():
                     p = psutil.Process(pid)
                     try:
                         cmd = " ".join(p.cmdline() or []).lower()
+                        name = p.name().lower()
                     except Exception:
                         cmd = ""
-                    if "wechat_bot_gui" not in cmd:
+                        name = ""
+                    if ("wechat_ai_bot_dev" in cmd or "wechat_ai_bot_dev" in name) and ("wechat_bot_gui" not in cmd and "wechat_bot_gui" not in name):
                         p.kill()
                         print(f"Terminated WeChat Bot Dev by PID {pid}")
         except Exception:

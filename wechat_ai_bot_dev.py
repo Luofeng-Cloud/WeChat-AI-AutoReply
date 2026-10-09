@@ -102,6 +102,7 @@ ocr_engine = init_ocr()
 LAST_PROCESSED_SIGNATURE = {}
 API_CONVERSATION_HISTORY = {}
 LAST_CLICKED_CANDIDATE_TIME = {}
+SEND_FAIL_RETRY = {}
 LAST_CHAT_HASH = None
 LAST_SIDEBAR_HASH = None
 LAST_FULL_SCAN_TIME = 0
@@ -118,9 +119,16 @@ def load_config():
         "whitelist": ["好友A", "好友B"],
         "blacklist": ["文件传输助手", "微信团队", "订阅号", "公众号", "服务号"],
         "ai_engine": "openai_api",
-        "api_url": "https://api.xiaomimimo.com/v1/chat/completions",
-        "api_key": "",
-        "api_model": "mimo-v2.6-flash",
+        "openai_api": {
+            "api_key": "",
+            "api_base": "https://api.xiaomimimo.com/v1",
+            "model": "mimo-v2.6-flash",
+            "temperature": 0.7
+        },
+        "system_prompt": "你现在是微信账号的主人（真实本人）。请以我（主人本人）的第一人称、自然口语、亲切随和的日常语气直接回复微信好友的消息。就像我本人在用手机打字聊天一样自然。严禁透露任何AI、机器人或助理身份，严禁使用客套机械的客服腔，严禁输出任何解释或markdown格式，直接输出我回复的那句话。",
+        "reply_delay_seconds": 0.0,
+        "check_interval_seconds": 0.8,
+        "ignored_keywords": ["按住鼠标", "语音输入文字", "按住说话", "按Enter发送", "发送(S)"],
         "friend_personas": {}
     }
 
@@ -132,6 +140,18 @@ def load_convo_map():
         except Exception:
             pass
     return {}
+
+_CFG_WARNED = set()
+
+def cfg_float(dct, key, default):
+    """健壮读取数字配置项：非法/缺失时回退默认值，每个键只告警一次防刷屏"""
+    try:
+        return float(dct.get(key, default))
+    except Exception:
+        if key not in _CFG_WARNED:
+            _CFG_WARNED.add(key)
+            log(f"⚠️ [配置项无效] {key} 不是合法数字，已回退默认值 {default}")
+        return float(default)
 
 # =============================================================================
 # 3. DPI & PHYSICAL LAYOUT ENGINE (WINDOW-SIZE INVARIANT)
@@ -216,47 +236,53 @@ def grab_wechat_window(hwnd):
             
         scale = get_dpi_scale()
         
-        # 1. 优先尝试 Win32 PrintWindow 纯后台截取 (PW_RENDERFULLCONTENT = 2)
-        hwnd_dc = user32.GetWindowDC(hwnd)
-        mfc_dc = gdi32.CreateCompatibleDC(hwnd_dc)
-        save_bitmap = gdi32.CreateCompatibleBitmap(hwnd_dc, w, h)
-        gdi32.SelectObject(mfc_dc, save_bitmap)
-        
-        result = user32.PrintWindow(hwnd, mfc_dc, 2)
-        if not result:
-            result = user32.PrintWindow(hwnd, mfc_dc, 0)
-            
+        hwnd_dc = None
+        mfc_dc = None
+        save_bitmap = None
         img = None
-        if result:
-            class BITMAPINFOHEADER(ctypes.Structure):
-                _fields_ = [
-                    ('biSize', wintypes.DWORD),
-                    ('biWidth', wintypes.LONG),
-                    ('biHeight', wintypes.LONG),
-                    ('biPlanes', wintypes.WORD),
-                    ('biBitCount', wintypes.WORD),
-                    ('biCompression', wintypes.DWORD),
-                    ('biSizeImage', wintypes.DWORD),
-                    ('biXPelsPerMeter', wintypes.LONG),
-                    ('biYPelsPerMeter', wintypes.LONG),
-                    ('biClrUsed', wintypes.DWORD),
-                    ('biClrImportant', wintypes.DWORD)
-                ]
-            bmi = BITMAPINFOHEADER()
-            bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-            bmi.biWidth = w
-            bmi.biHeight = -h # top-down
-            bmi.biPlanes = 1
-            bmi.biBitCount = 32
-            bmi.biCompression = 0
+        try:
+            hwnd_dc = user32.GetWindowDC(hwnd)
+            mfc_dc = gdi32.CreateCompatibleDC(hwnd_dc)
+            save_bitmap = gdi32.CreateCompatibleBitmap(hwnd_dc, w, h)
+            gdi32.SelectObject(mfc_dc, save_bitmap)
             
-            buf = ctypes.create_string_buffer(w * h * 4)
-            gdi32.GetDIBits(mfc_dc, save_bitmap, 0, h, buf, ctypes.byref(bmi), 0)
-            img = Image.frombuffer('RGBA', (w, h), buf, 'raw', 'BGRA', 0, 1).convert('RGB')
-            
-        gdi32.DeleteObject(save_bitmap)
-        gdi32.DeleteDC(mfc_dc)
-        user32.ReleaseDC(hwnd, hwnd_dc)
+            result = user32.PrintWindow(hwnd, mfc_dc, 2)
+            if not result:
+                result = user32.PrintWindow(hwnd, mfc_dc, 0)
+                
+            if result:
+                class BITMAPINFOHEADER(ctypes.Structure):
+                    _fields_ = [
+                        ('biSize', wintypes.DWORD),
+                        ('biWidth', wintypes.LONG),
+                        ('biHeight', wintypes.LONG),
+                        ('biPlanes', wintypes.WORD),
+                        ('biBitCount', wintypes.WORD),
+                        ('biCompression', wintypes.DWORD),
+                        ('biSizeImage', wintypes.DWORD),
+                        ('biXPelsPerMeter', wintypes.LONG),
+                        ('biYPelsPerMeter', wintypes.LONG),
+                        ('biClrUsed', wintypes.DWORD),
+                        ('biClrImportant', wintypes.DWORD)
+                    ]
+                bmi = BITMAPINFOHEADER()
+                bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+                bmi.biWidth = w
+                bmi.biHeight = -h # top-down
+                bmi.biPlanes = 1
+                bmi.biBitCount = 32
+                bmi.biCompression = 0
+                
+                buf = ctypes.create_string_buffer(w * h * 4)
+                gdi32.GetDIBits(mfc_dc, save_bitmap, 0, h, buf, ctypes.byref(bmi), 0)
+                img = Image.frombuffer('RGBA', (w, h), buf, 'raw', 'BGRA', 0, 1).convert('RGB')
+        finally:
+            if save_bitmap:
+                gdi32.DeleteObject(save_bitmap)
+            if mfc_dc:
+                gdi32.DeleteDC(mfc_dc)
+            if hwnd_dc:
+                user32.ReleaseDC(hwnd, hwnd_dc)
         
         if img and np.array(img).max() > 10:
             return img, rect, scale
@@ -271,8 +297,45 @@ def grab_wechat_window(hwnd):
         return None, None, 1.0
 
 def activate_wechat(hwnd):
-    """开发版静默就绪引擎：0 弹窗 0 置顶 0 焦点抢占"""
-    pass
+    """
+    Win32 穿透提权引擎：
+    突破 Windows 10/11 防抢焦点 (ASFW) 与输入队列隔离，赋予微信合法键盘输入权限。
+    """
+    try:
+        ensure_default_desktop()
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9) # SW_RESTORE
+            time.sleep(0.04)
+            
+        cur_fore = user32.GetForegroundWindow()
+        cur_thread = user32.GetWindowThreadProcessId(cur_fore, None) if cur_fore else 0
+        wx_thread = user32.GetWindowThreadProcessId(hwnd, None)
+        my_thread = kernel32.GetCurrentThreadId()
+        
+        attached_cur = False
+        attached_my = False
+        try:
+            if cur_thread and cur_thread != wx_thread:
+                attached_cur = bool(user32.AttachThreadInput(cur_thread, wx_thread, True))
+            if my_thread and my_thread != wx_thread:
+                attached_my = bool(user32.AttachThreadInput(my_thread, wx_thread, True))
+                
+            # 瞬时穿透提升 Z-Order 并切换焦点 (SWP_NOSIZE | SWP_NOMOVE = 0x0003)
+            user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0003 | 0x0040)
+            user32.SetForegroundWindow(hwnd)
+            user32.BringWindowToTop(hwnd)
+            user32.SwitchToThisWindow(hwnd, True)
+            user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0003)
+        finally:
+            if attached_cur:
+                user32.AttachThreadInput(cur_thread, wx_thread, False)
+            if attached_my:
+                user32.AttachThreadInput(my_thread, wx_thread, False)
+                
+        time.sleep(0.03)
+        return user32.GetForegroundWindow() == hwnd
+    except Exception:
+        return False
 
 def post_click_client_point(hwnd, client_x, client_y):
     """
@@ -281,6 +344,8 @@ def post_click_client_point(hwnd, client_x, client_y):
     """
     try:
         lParam = (int(client_y) << 16) | (int(client_x) & 0xFFFF)
+        user32.PostMessageW(hwnd, 0x0200, 0x0000, lParam) # WM_MOUSEMOVE 先更新 Qt 内部悬停控件
+        time.sleep(0.01)
         user32.PostMessageW(hwnd, 0x0201, 0x0001, lParam) # WM_LBUTTONDOWN
         time.sleep(0.02)
         user32.PostMessageW(hwnd, 0x0202, 0x0000, lParam) # WM_LBUTTONUP
@@ -307,32 +372,51 @@ def normalize_for_match(text):
 def is_name_matched_strict(contact_name, whitelist):
     if not contact_name or len(str(contact_name).strip()) < 2:
         return False, ""
-        
+
     c_raw = str(contact_name).strip()
-    # 群聊与非白名单防火墙：拦截一切带人数后缀群或群聊关键字
-    if re.search(r'\(\d+\)$|\[\d+条\]|\b群\b|VIP|社区|福利', c_raw):
-        return False, ""
-        
-    norm_ocr = normalize_for_match(c_raw)
-    
-    for t in whitelist:
-        t_clean = t.strip()
-        if not t_clean:
+    # 红点数字可能被 OCR 并入行首 (如 "3张三")，生成剥离变体一并参与匹配
+    raw_variants = [c_raw]
+    stripped = re.sub(r'^\d{1,2}(?=[^\d])', '', c_raw).strip()
+    if stripped and len(stripped) >= 2 and stripped != c_raw:
+        raw_variants.append(stripped)
+
+    for r in raw_variants:
+        # 群聊与非白名单防火墙：只检测"名字段"(会话行可能携带消息预览，
+        # 预览里的括号数字如 "一共(3)个文件" 不应误伤真实好友)
+        name_seg = re.split(r'\s+', r, maxsplit=1)[0]
+        if re.search(r'[\(（]\d+[\)）](\s|$)|\[\d+条\]|群聊|交流群|互助群|通知群|工作群|家族群|同乡群|部门群', name_seg):
+            return False, ""
+
+    for r in raw_variants:
+        norm_ocr = normalize_for_match(r)
+        if not norm_ocr:
             continue
-            
-        norm_w = normalize_for_match(t_clean)
-        # 1. 严格全等
-        if norm_ocr == norm_w:
-            return True, t_clean
-        # 2. 前缀精准匹配（例如 "张三测试" 只要以 "张三" 开头即 100% 命中）
-        if norm_ocr.startswith(norm_w):
-            return True, t_clean
-        # 3. 包含关系与双向模糊容错（支持后面跟随较长消息预览）
-        if norm_w in norm_ocr and len(norm_ocr) <= len(norm_w) + 20:
-            return True, t_clean
-        if norm_ocr in norm_w and len(norm_w) <= len(norm_ocr) + 3:
-            return True, t_clean
-            
+
+        for t in whitelist:
+            t_clean = t.strip()
+            if not t_clean:
+                continue
+
+            norm_w = normalize_for_match(t_clean)
+            if not norm_w:
+                continue
+            # 1. 严格全等
+            if norm_ocr == norm_w:
+                return True, t_clean
+            # 2. 前缀精准匹配（例如会话行 "张三 好的收到" / "张三 [图片]" 必须以好友名字开头）
+            #    越配防护：原文中名字紧跟普通字符且尾段极短 (≤3 字) 时，
+            #    疑似是更长的另一个名字 (如白名单"张三"遇到"张三丰")，拒绝命中防止串发
+            if norm_ocr.startswith(norm_w):
+                m = re.match(re.escape(t_clean), r, re.IGNORECASE)
+                if m:
+                    tail = r[m.end():]
+                    if tail and re.match(r'[0-9A-Za-z\u4e00-\u9fff]', tail[0]) and len(tail.strip()) <= 3:
+                        continue
+                return True, t_clean
+            # 3. 极小截断容错（仅当 OCR 极轻微少识别尾部 1 个字符时允许）
+            if norm_w.startswith(norm_ocr) and len(norm_w) <= len(norm_ocr) + 1:
+                return True, t_clean
+
     return False, ""
 
 def has_red_badge_by_text_anchor(arr, text_box, layout):
@@ -511,77 +595,143 @@ def clean_ai_reply(reply):
 def generate_ai_reply(sender, message_content):
     cfg = load_config()
     now_time = time.strftime("%H:%M")
-    persona_desc = cfg.get("friend_personas", {}).get(sender, "幽默风趣、随和自然的真实好友")
     
-    system_prompt = (
-        f"你现在是微信账号的主人本人（真实真人），正在微信上与好友【{sender}】聊天。当前时间是{now_time}。\n"
-        f"【专属人设风格】：{persona_desc}\n"
-        "【对话规则】：直接输出发给对方的一句中文，口语化自然、简练得体。严禁括号描写心理活动，严禁透露AI身份。"
-    )
+    custom_prompt = (cfg.get("system_prompt") or "").strip()
+    persona_desc = ((cfg.get("friend_personas") or {}).get(sender) or "").strip()
     
-    oa = cfg.get("openai_api", {})
-    api_base = cfg.get("api_url") or oa.get("api_base", "https://api.xiaomimimo.com/v1")
+    if custom_prompt:
+        if persona_desc:
+            system_prompt = (
+                f"{custom_prompt}\n"
+                f"【当前互动好友】：好友【{sender}】，当前时间{now_time}。\n"
+                f"【该好友专属人设】：{persona_desc}\n"
+                f"【对话规则】：直接输出发给对方的一句中文，口语化自然、简练得体。严禁括号描写心理活动，严禁透露AI身份。"
+            )
+        else:
+            system_prompt = (
+                f"{custom_prompt}\n"
+                f"【当前互动好友】：好友【{sender}】，当前时间{now_time}。\n"
+                f"【对话规则】：直接输出发给对方的一句中文，口语化自然、简练得体。严禁括号描写心理活动，严禁透露AI身份。"
+            )
+    else:
+        fallback_persona = persona_desc or "幽默风趣、随和自然的真实好友"
+        system_prompt = (
+            f"你现在是微信账号的主人本人（真实真人），正在微信上与好友【{sender}】聊天。当前时间是{now_time}。\n"
+            f"【专属人设风格】：{fallback_persona}\n"
+            f"【对话规则】：直接输出发给对方的一句中文，口语化自然、简练得体。严禁括号描写心理活动，严禁透露AI身份。"
+        )
+    
+    oa = cfg.get("openai_api") or {}
+    api_base = cfg.get("api_url") or oa.get("api_base") or "https://api.xiaomimimo.com/v1"
     url = api_base if api_base.endswith("/chat/completions") else f"{api_base.rstrip('/')}/chat/completions"
-    key = cfg.get("api_key") or oa.get("api_key", "")
-    model = cfg.get("api_model") or oa.get("model", "mimo-v2.6-flash")
+    key = cfg.get("api_key") or oa.get("api_key") or ""
+    model = cfg.get("api_model") or oa.get("model") or "mimo-v2.6-flash"
+    temperature = cfg_float(oa, "temperature", 0.7)
     
-    if key and url:
-        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-        history = API_CONVERSATION_HISTORY.get(sender, [])
-        messages = [{"role": "system", "content": system_prompt}]
-        messages.extend(history[-8:])
-        messages.append({"role": "user", "content": message_content})
+    if not key or not url:
+        log("⚠️ [未配置 API Key] 未检测到 API Key，跳过自动回复。请先在控制中心【AI 引擎设置】中配置有效 Key！")
+        return ""
         
-        payload = {"model": model, "messages": messages, "temperature": 0.7}
-        try:
-            log(f"🤖 正在调用大模型 ({model}) 回复【{sender}】...")
-            res = requests.post(url, headers=headers, json=payload, timeout=12)
-            if res.status_code == 200:
-                reply = res.json()["choices"][0]["message"]["content"]
-                cleaned = clean_ai_reply(reply)
-                history.append({"role": "user", "content": message_content})
-                history.append({"role": "assistant", "content": cleaned})
-                API_CONVERSATION_HISTORY[sender] = history[-10:]
-                return cleaned
-            else:
-                log(f"API HTTP {res.status_code}: {res.text[:100]}")
-        except Exception as e:
-            log(f"API Error: {e}")
-            
-    return f"在呢，刚才没注意看手机，怎么啦？"
-
-def verify_outgoing_bubble_success(hwnd, layout):
-    """
-    发送后真彩绿底闭环验收引擎：
-    在回车发送后截取聊天区底部，校验是否真正长出了微信特征绿底 (#95EC69) 气泡！
-    """
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    history = API_CONVERSATION_HISTORY.get(sender, [])
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(history[-8:])
+    messages.append({"role": "user", "content": message_content})
+    
+    payload = {"model": model, "messages": messages, "temperature": temperature}
     try:
-        time.sleep(0.22)
-        img_verify, _, _ = grab_wechat_window(hwnd)
-        if not img_verify:
-            return False
-            
-        W, H = img_verify.size
-        arr_v = np.array(img_verify)
+        log(f"🤖 正在调用大模型 ({model}) 回复【{sender}】...")
+        res = requests.post(url, headers=headers, json=payload, timeout=12)
+        if res.status_code == 200:
+            reply = res.json()["choices"][0]["message"]["content"]
+            cleaned = clean_ai_reply(reply)
+            history.append({"role": "user", "content": message_content})
+            history.append({"role": "assistant", "content": cleaned})
+            API_CONVERSATION_HISTORY[sender] = history[-10:]
+            return cleaned
+        else:
+            log(f"⚠️ [API HTTP {res.status_code}] {res.text[:100]}")
+    except Exception as e:
+        log(f"⚠️ [API 请求异常] {e}")
+        
+    return ""
+
+def count_green_bubble_metrics(img, layout):
+    """
+    计算聊天视窗底部两个关键特征带的绿底像素分布：
+    1. tot_green: 底部 220px 偏右侧整体绿底像素总数
+    2. bot_green: 最贴近输入框的最后 80px 窄带右侧绿底像素数（最新发出气泡必定落入此区域）
+    """
+    if not img:
+        return 0, 0
+    try:
+        W, H = img.size
+        arr_v = np.array(img)
         chat_start_x = layout["chat_start_x"]
         input_h = layout["input_h"]
         
-        # 采样聊天视窗底部最后 220px 区域 (即最新发出的气泡所在的右侧区域)
-        y1 = max(0, int(H - input_h - 220))
-        y2 = min(H, int(H - input_h + 15))
-        x1 = int(chat_start_x + 0.20 * (W - chat_start_x)) # 偏右侧 (我发绿底气泡区域)
-        x2 = min(W, int(W - 10))
+        # 区域 1: 底部 220px 整体监控区 (从 0.35 偏移起，严格锚定右侧我方气泡轨，杜绝对方发绿色表情包的干扰)
+        y1_tot = max(0, int(H - input_h - 220))
+        y2_tot = min(H, int(H - input_h + 10))
+        x1_tot = int(chat_start_x + 0.35 * (W - chat_start_x))
+        x2_tot = min(W, int(W - 10))
         
-        patch = arr_v[y1:y2, x1:x2]
-        if patch.size == 0:
-            return False
+        patch_tot = arr_v[y1_tot:y2_tot, x1_tot:x2_tot]
+        tot_green = 0
+        if patch_tot.size > 0:
+            pr = patch_tot[:, :, 0].astype(int)
+            pg = patch_tot[:, :, 1].astype(int)
+            pb = patch_tot[:, :, 2].astype(int)
+            mask_tot = (pg > pr + 18) & (pg > pb + 18) & (pg > 45)
+            tot_green = int(np.sum(mask_tot))
             
-        # 微信特征绿底色判定 (转 int 杜绝浅色背景回绕溢出)
-        pr, pg, pb = patch[:, :, 0].astype(int), patch[:, :, 1].astype(int), patch[:, :, 2].astype(int)
-        green_mask = (pg > pr + 18) & (pg > pb + 18) & (pg > 45)
-        return np.sum(green_mask) >= 18
+        # 区域 2: 贴底 80px 最新气泡锚定区 (只监控最下方刚长出的新气泡)
+        y1_bot = max(0, int(H - input_h - 80))
+        y2_bot = min(H, int(H - input_h))
+        x1_bot = int(chat_start_x + 0.35 * (W - chat_start_x))
+        x2_bot = min(W, int(W - 20))
+        
+        patch_bot = arr_v[y1_bot:y2_bot, x1_bot:x2_bot]
+        bot_green = 0
+        if patch_bot.size > 0:
+            pr_b = patch_bot[:, :, 0].astype(int)
+            pg_b = patch_bot[:, :, 1].astype(int)
+            pb_b = patch_bot[:, :, 2].astype(int)
+            mask_bot = (pg_b > pr_b + 18) & (pg_b > pb_b + 18) & (pg_b > 45)
+            bot_green = int(np.sum(mask_bot))
+            
+        return tot_green, bot_green
     except Exception:
-        return False
+        return 0, 0
+
+def verify_diff_bubble_success(img_pre, img_post, layout):
+    """
+    【严谨差分动态绿底增量闭环验收引擎（三态架构）】：
+    返回值三态：
+      True: 明确成功（差分检测到新长出的绿底气泡增量）
+      False: 明确失败（画面清晰但确实未检测到新绿底增量，允许进入受控重试）
+      "UNCERTAIN": 无法判定（截图异常、画面全黑或 DWM 离屏抓取受阻，安全熔断终止重试以防重复发送）
+    """
+    if not img_pre or not img_post:
+        return "UNCERTAIN"
+    try:
+        arr_pre = np.array(img_pre)
+        arr_post = np.array(img_post)
+        if arr_pre.max() <= 10 or arr_post.max() <= 10:
+            return "UNCERTAIN"
+    except Exception:
+        return "UNCERTAIN"
+
+    pre_tot, pre_bot = count_green_bubble_metrics(img_pre, layout)
+    post_tot, post_bot = count_green_bubble_metrics(img_post, layout)
+    
+    # 判定规则：满足任一合法增量特征即证明新气泡生成
+    has_bottom_anchor_spawn = (post_bot >= 40 and (post_bot - pre_bot) >= 30)
+    has_total_green_growth = ((post_tot - pre_tot) >= 50)
+    
+    if has_bottom_anchor_spawn or has_total_green_growth:
+        return True
+    return False
 
 def safe_clipboard_copy(text, retries=3, delay=0.03):
     """
@@ -600,14 +750,14 @@ def safe_clipboard_copy(text, retries=3, delay=0.03):
 def send_reply_instant(hwnd, rect, layout, target, final_reply):
     """
     极速秒回直达引擎（局部消息投递，0 弹窗 0 鼠标物理移动）：
-    1. 预检当前顶栏目标
-    2. 若目标偏离，自动在左侧重定向锁定
-    3. 若无法定位目标，触发安全熔断，绝不串发
-    4. 线程挂接输入 -> 局部消息注入 -> 真彩绿底闭环验收
-    5. 极速就地完成
+    1. 预检当前顶栏目标并智能纠偏
+    2. 剪贴板安全原子写入
+    3. Win32 穿透提权与击键前前台强校验 (必须 GetForegroundWindow() == hwnd，绝不盲发按键防串窗)
+    4. 动态自适应几何坐标模拟点击输入框聚焦 (0 鼠标物理移动)
+    5. Ctrl+V 与 Enter 极速注入
+    6. 平稳切回用户原窗口 (彻底废除 HWND_BOTTOM 压底)
+    7. 动态差分绿底增量严谨闭环验收
     """
-    activate_wechat(hwnd)
-    
     # --- 发送前核验 (Pre-Flight Verification) ---
     img_now, cur_rect, cur_scale = grab_wechat_window(hwnd)
     if not img_now:
@@ -666,75 +816,89 @@ def send_reply_instant(hwnd, rect, layout, target, final_reply):
         
     user_orig_hwnd = user32.GetForegroundWindow()
     send_success = False
+    send_unverified = False
+    
     for attempt in range(1, 3):
-        # 1. 局部消息模拟点击输入框聚焦 (物理鼠标 0 像素移动)
-        post_click_client_point(hwnd, int(0.55 * cur_W), int(cur_H - 0.08 * cur_H))
-        time.sleep(0.02)
-        
-        # 2. 剪贴板填充真实完整文本 (带防冲突退避重试)
+        # 1. 剪贴板安全写入
         if not safe_clipboard_copy(final_reply, retries=3, delay=0.03):
-            log(f"⚠️ [剪贴板写入受阻(尝试 {attempt}/2)] 系统剪贴板正被其他程序独占，稍后重试...")
+            log(f"⚠️ [剪贴板写入受阻(尝试 {attempt}/2)] 系统剪贴板被占用，稍后重试...")
             time.sleep(0.05)
             continue
         time.sleep(0.02)
         
-        # 3. 极速瞬态激活注入 (15ms 瞬态，绝不挪动鼠标)
-        cur_thread = user32.GetWindowThreadProcessId(user_orig_hwnd, None) if user_orig_hwnd else 0
-        wx_thread = user32.GetWindowThreadProcessId(hwnd, None)
-        my_thread = kernel32.GetCurrentThreadId()
+        # 2. 发送前基线图像抓取 (用于差分验收)
+        img_pre, _, _ = grab_wechat_window(hwnd)
         
-        attached_cur = False
-        attached_my = False
-        try:
-            if cur_thread and cur_thread != wx_thread:
-                attached_cur = bool(user32.AttachThreadInput(cur_thread, wx_thread, True))
-            if my_thread and my_thread != wx_thread:
-                attached_my = bool(user32.AttachThreadInput(my_thread, wx_thread, True))
-                
-            user32.SetForegroundWindow(hwnd)
-            time.sleep(0.01)
+        # 3. Win32 穿透提权激活微信
+        activate_wechat(hwnd)
+        time.sleep(0.03)
+        
+        # 🔥 关键安全红线：击键前强校验前台窗口！
+        cur_fore = user32.GetForegroundWindow()
+        if cur_fore != hwnd:
+            log(f"🚫 [安全熔断(尝试 {attempt}/2)] 微信窗口未夺取到前台焦点 (当前前台HWND={cur_fore})，坚决终止按键模拟防串窗！")
+            time.sleep(0.15)
+            continue
             
-            # 发送真实的 Ctrl+V 组合键 (彻底杜绝误发单字母 v)
+        # 4. 动态自适应几何坐标模拟点击输入框聚焦 (0 鼠标物理移动)
+        # 根据动态高度与 input_h 计算垂直安全中心，避开底部图标栏与顶部视窗分割线
+        input_safe_y = int(cur_H - cur_layout["input_h"] * 0.55)
+        input_safe_x = int(0.55 * cur_W)
+        post_click_client_point(hwnd, input_safe_x, input_safe_y)
+        time.sleep(0.03)
+        
+        # 二次复验前台归属
+        if user32.GetForegroundWindow() != hwnd:
+            log(f"🚫 [安全熔断(尝试 {attempt}/2)] 点击输入框时光标脱失，终止击键！")
+            continue
+            
+        # 5. 极速键盘事件注入 (Ctrl+V 与 Enter)
+        try:
+            # Ctrl+V 粘贴
             user32.keybd_event(0x11, 0, 0, 0)
             user32.keybd_event(0x56, 0, 0, 0)
-            time.sleep(0.01)
+            time.sleep(0.02)
             user32.keybd_event(0x56, 0, 0x0002, 0)
             user32.keybd_event(0x11, 0, 0x0002, 0)
-            time.sleep(0.02)
+            time.sleep(0.04)
             
             # 回车发送
             user32.keybd_event(0x0D, 0, 0, 0)
-            time.sleep(0.01)
+            time.sleep(0.02)
             user32.keybd_event(0x0D, 0, 0x0002, 0)
-            time.sleep(0.03)
-            
-            # 4. 瞬间恢复用户原本的窗口层级 (若微信原本在底层/后台，立即压回底层并恢复用户前台)
+            time.sleep(0.04)
+        finally:
+            # 6. 平稳恢复用户原本的前台窗口 (坚决废除 HWND_BOTTOM 压底！)
             if user_orig_hwnd and user_orig_hwnd != hwnd:
                 user32.SetForegroundWindow(user_orig_hwnd)
-                user32.SetWindowPos(hwnd, 1, 0, 0, 0, 0, 0x0003 | 0x0010) # HWND_BOTTOM, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
-        finally:
-            if attached_cur:
-                user32.AttachThreadInput(cur_thread, wx_thread, False)
-            if attached_my:
-                user32.AttachThreadInput(my_thread, wx_thread, False)
-            
-        # 5. 🔍 真彩绿底闭环验收
-        if verify_outgoing_bubble_success(hwnd, cur_layout):
+                
+        # 7. 渲染沉降与严谨差分动态绿底增量闭环验收
+        time.sleep(0.35) # 等待微信 Qt5 气泡动画与排版彻底沉降
+        img_post, _, _ = grab_wechat_window(hwnd)
+        verdict = verify_diff_bubble_success(img_pre, img_post, cur_layout)
+        if verdict is True:
             send_success = True
             break
+        elif verdict == "UNCERTAIN":
+            log(f"⚠️ [闭环验收异常] 离屏画面抓取受阻无法比对，安全熔断终止重试以防向好友【{target}】重复发消息！")
+            send_success = True
+            send_unverified = True
+            break
         else:
-            log(f"⚠️ [发送闭环验收未通过(尝试 {attempt}/2)] 未检测到新绿底气泡，正在执行强力二次重试...")
-            time.sleep(0.10)
-    
-    # 还原用户原本的剪贴板 (带安全重试)
+            log(f"⚠️ [发送闭环验收未通过(尝试 {attempt}/2)] 未检测到新长出的绿底气泡增量，执行强力二次重试...")
+            time.sleep(0.12)
+            
+    # 还原用户原本的剪贴板
     if user_old_clip is not None:
         safe_clipboard_copy(user_old_clip, retries=2, delay=0.02)
-            
-    if send_success:
-        log(f"✅ [后台静默秒回成功] 已回复【{target}】！(物理鼠标 0 移动，窗口层级已锁定)")
+        
+    if send_success and send_unverified:
+        log(f"⚠️ [发送未验证] 已按发出处理并登记防重复，但未能抓图验证好友【{target}】是否收到，请留意确认！")
+    elif send_success:
+        log(f"✅ [后台静默秒回成功] 已回复【{target}】！(物理鼠标 0 移动，瞬态焦点已复原)")
     else:
-        log(f"❌ [发送脱靶告警] 重试后仍未检测到绿底气泡！")
-    
+        log(f"❌ [发送脱靶告警] 2 次重试后均未检测到绿底气泡增量！")
+        
     return send_success
 
 # =============================================================================
@@ -804,6 +968,20 @@ def scan_and_reply_wechat(hwnd):
     whitelist = cfg.get("whitelist", [])
     blacklist = cfg.get("blacklist", [])
     ignored_keywords = cfg.get("ignored_keywords", [])
+
+    def is_valid_non_whitelist_target(name_str):
+        if not name_str or len(str(name_str).strip()) < 2:
+            return False
+        n = str(name_str).strip()
+        if any(b_name in n for b_name in blacklist if b_name.strip()):
+            return False
+        # 群聊防火墙只检测"名字段"（会话行可能携带消息预览，预览里的括号数字不误伤好友）
+        name_seg = re.split(r'\s+', n, maxsplit=1)[0]
+        if re.search(r'[\(（]\d+[\)）](\s|$)|\[\d+条\]|群聊|交流群|互助群|通知群|工作群|家族群|同乡群|部门群', name_seg):
+            return False
+        if n in ["微信", "搜索", "文件传输助手", "朋友圈", "订阅号", "服务通知", "腾讯新闻"]:
+            return False
+        return True
     
     sidebar_w = layout["sidebar_w"]
     chat_start_x = layout["chat_start_x"]
@@ -840,7 +1018,11 @@ def scan_and_reply_wechat(hwnd):
             active_green_text = text_clean
             
         # 判定是否有新消息红点 (基于文字动态几何锚定)
-        matched, target = is_name_matched_strict(text_clean, whitelist) if whitelist_mode else (len(text_clean) >= 2 and text_clean not in ["搜索", "微信", "朋友圈"], text_clean)
+        if whitelist_mode:
+            matched, target = is_name_matched_strict(text_clean, whitelist)
+        else:
+            matched = is_valid_non_whitelist_target(text_clean)
+            target = text_clean.strip()
         if matched and has_red_badge_by_text_anchor(arr_wechat, b, layout):
             red_badge_candidates.append((cy, target))
                 
@@ -850,21 +1032,27 @@ def scan_and_reply_wechat(hwnd):
     active_right_title = extract_active_chat_title(res, layout)
     
     # -------------------------------------------------------------------------
-    # 🌟 白名单绝对硬核门禁 (Strict Whitelist Gating: 绝不误回复非白名单人员)
+    # 🌟 会话目标识别与门禁 (Whitelist Gating / Non-Whitelist Firewall)
     # -------------------------------------------------------------------------
     current_active_target = None
     
-    # 1. 优先校验右侧顶栏标题
-    if active_right_title:
-        matched_right, right_target = is_name_matched_strict(active_right_title, whitelist)
-        if matched_right:
-            current_active_target = right_target
-            
-    # 2. 双重保险：若顶栏未匹配上，但左侧选中的主激活绿条明确属于白名单好友
-    if not current_active_target and active_green_text:
-        matched_left, left_target = is_name_matched_strict(active_green_text, whitelist)
-        if matched_left:
-            current_active_target = left_target
+    if whitelist_mode:
+        # 白名单模式：必须精准命中白名单中的指定好友
+        if active_right_title:
+            matched_right, right_target = is_name_matched_strict(active_right_title, whitelist)
+            if matched_right:
+                current_active_target = right_target
+                
+        if not current_active_target and active_green_text:
+            matched_left, left_target = is_name_matched_strict(active_green_text, whitelist)
+            if matched_left:
+                current_active_target = left_target
+    else:
+        # 非白名单模式：允许回复普通单人好友，强制过滤黑名单、服务号与群聊
+        if active_right_title and is_valid_non_whitelist_target(active_right_title):
+            current_active_target = active_right_title.strip()
+        elif active_green_text and is_valid_non_whitelist_target(active_green_text):
+            current_active_target = active_green_text.strip()
     
     if current_active_target:
         chat_bubbles = parse_chat_bubbles_chromatic(res, img_wechat, layout, ignored_keywords)
@@ -899,14 +1087,36 @@ def scan_and_reply_wechat(hwnd):
                                     combined_text = combined_lat
                                     current_sig = (current_active_target, combined_text, int(pending_bubbles[-1]['last_y']), len(chat_bubbles_lat))
                             
-                    LAST_PROCESSED_SIGNATURE[current_active_target] = current_sig
-                    
                     log(f"\n📩 [当前会话锁定·连发聚合] 收到当前好友【{current_active_target}】新消息({len(pending_bubbles)}条): \"{combined_text}\"")
                     ai_reply = generate_ai_reply(current_active_target, combined_text)
                     if ai_reply:
                         prefix = cfg.get("reply_prefix", "") if cfg.get("include_prefix", False) else ""
                         final_reply = f"{prefix}{ai_reply}"
-                        send_reply_instant(hwnd, rect, layout, current_active_target, final_reply)
+                        
+                        # 拟人打字思考延迟 (防高频回复)
+                        reply_delay = cfg_float(cfg, "reply_delay_seconds", 0.0)
+                        if reply_delay > 0:
+                            time.sleep(reply_delay)
+                            
+                        # 执行发送
+                        success = send_reply_instant(hwnd, rect, layout, current_active_target, final_reply)
+                        if success:
+                            LAST_PROCESSED_SIGNATURE[current_active_target] = current_sig
+                            SEND_FAIL_RETRY.pop(current_sig, None)
+                        else:
+                            fail_count = SEND_FAIL_RETRY.get(current_sig, 0) + 1
+                            SEND_FAIL_RETRY[current_sig] = fail_count
+                            if fail_count >= 2:
+                                # 连续 2 次发送脱靶（如微信窗口遮挡或最小化），锁定签名放弃以防重试风暴无限消耗 API 额度
+                                LAST_PROCESSED_SIGNATURE[current_active_target] = current_sig
+                                SEND_FAIL_RETRY.pop(current_sig, None)
+                                log(f"🚫 [重试超限熔断] 好友【{current_active_target}】消息连续 2 次发送脱靶，已放弃该条回复以防死循环。")
+                            else:
+                                log(f"⚠️ [发送脱靶记录] 好友【{current_active_target}】第 {fail_count} 次发送未成，将在下个心跳周期进行 1 次补偿重试。")
+                    else:
+                        # 生成回复为空（如未填 Key 或 API 异常），记录告警并登记签名防空转
+                        log(f"⚠️ [AI生成跳过] 好友【{current_active_target}】消息未获得有效AI回复 (API超时/网络抖动或未配Key)，登记签名防空转。")
+                        LAST_PROCESSED_SIGNATURE[current_active_target] = current_sig
                 
                 # 只要当前会话存在待回复/刚回复的消息，直接 return，100% 物理阻断后续任何红点跳转！
                 return
@@ -941,13 +1151,12 @@ def scan_and_reply_wechat(hwnd):
             post_click_client_point(hwnd, click_x, int(cand_y))
             time.sleep(0.35) # 充分等待 Qt5 引擎将右侧所有新消息气泡 100% 渲染绘制完成
             
-            # 强制重置像素哨兵哈希，确保切入后 100% 触发全量 OCR 读取
+            # 强制重置像素哨兵哈希，确保切入后下个周期 100% 触发全量 OCR 读取
             LAST_CHAT_HASH = None
             LAST_SIDEBAR_HASH = None
             LAST_FULL_SCAN_TIME = 0
             
-            # 立即触发就地扫描，无需空等下个心跳周期，彻底消灭切换延迟
-            scan_and_reply_wechat(hwnd)
+            # 消除函数递归，直接返回交由外层主循环自然调度，彻底杜绝调用栈累积与内存堆叠
             return
 
 # =============================================================================
@@ -973,9 +1182,10 @@ def main_loop():
             if hwnd:
                 scan_and_reply_wechat(hwnd)
             cfg = load_config()
-            interval = float(cfg.get("check_interval_seconds", 0.8))
+            interval = cfg_float(cfg, "check_interval_seconds", 0.8)
             time.sleep(interval)
         except Exception as e:
+            log(f"⚠️ [主循环未捕获异常] {e}")
             time.sleep(1.0)
 
 if __name__ == "__main__":
