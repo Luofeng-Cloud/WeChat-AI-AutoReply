@@ -1,0 +1,14 @@
+node_modules/
+dist/
+out/
+release/
+build/
+*.log
+.devdata/
+.devdbg*/
+__pycache__/
+*.pyc
+.pytest_cache/
+wechat_config_dev.json
+wechat_convo_map.json
+*.pid

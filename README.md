@@ -20,6 +20,11 @@
 
 ---
 
+> **v2.0.0 新增 Electron 控制中心**　　控制中心已从 Tkinter 重写为 Electron 桌面应用
+> （`electron-app/`），后台核心重构为可分层的 Python 引擎包。功能只增不减，
+> 并修复了重复回复、配置被覆盖、DPI 缩放下识别失效等 29 类问题。
+> 详见 [CHANGELOG.md](CHANGELOG.md) 与 [electron-app/README.md](electron-app/README.md)。
+
 ### 📦 Windows 用户一键体验入口
 
 [![Download Release](https://img.shields.io/badge/🚀%20一键下载-Windows%20正式安装包%20(v1.0.2)-07C160?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases/latest/download/WeChat-AI-AutoReply_Setup.exe)
@@ -136,14 +141,20 @@ python wechat_ai_bot_dev.py
 
 ```text
 WeChat-AI-AutoReply/
-├── wechat_ai_bot_dev.py          # 后台常驻感知与调度核心 (OCR+Win32消息路由+离屏抓图)
-├── wechat_bot_gui_dev.py         # 现代化控制中心 GUI (Tkinter + 实时日志 + 托盘控制)
-├── kill_wechat_bot_dev.py        # 安全进程清理终结脚本 (精准定向关闭守护)
+├── electron-app/                 # ⭐ Electron 控制中心 + Python 引擎包
+│   ├── src/main|preload|renderer #   主进程 / 桥接层 / 8 个功能页界面
+│   ├── wechat_engine/            #   引擎：win32 · vision · naming · ai · 状态机
+│   ├── tests/                    #   203 个单元测试
+│   └── scripts/smoke.mjs         #   真实 Electron 冒烟测试（含页面截图）
+├── wechat_ai_bot_dev.py          # 旧入口 → 无界面静默守护（后台常驻核心）
+├── wechat_bot_gui_dev.py         # 旧入口 → 启动 Electron 控制中心
+├── kill_wechat_bot_dev.py        # 安全进程清理脚本 (按 PID 文件精准关闭守护)
 ├── wechat_config.example.json    # 工业级通用脱敏配置文件模板
 ├── .env.example                  # 环境变量配置模板
 ├── requirements.txt              # Python 依赖清单
 ├── .gitignore                    # 工业级排除规则 (严防私密配置与日志外泄)
 ├── LICENSE                       # MIT 开源许可证
+├── CHANGELOG.md                  # 版本更新与缺陷修复明细
 └── README.md                     # 项目说明文档
 ```
 

@@ -1,0 +1,11 @@
+# Runtime dependencies of the Python engine (wechat_engine/).
+#
+# The Electron shell checks these on first run and can install them into a discovered
+# interpreter. rapidocr_onnxruntime pulls in onnxruntime and opencv-python, which is
+# where almost all of the install size comes from.
+rapidocr_onnxruntime>=1.3.0
+Pillow>=9.0.0
+requests>=2.28.0
+psutil>=5.9.0
+pyperclip>=1.8.0
+numpy>=1.21.0

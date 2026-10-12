@@ -55,3 +55,17 @@ wechat_convo_map.json
 *.swo
 .DS_Store
 Thumbs.db
+
+# Electron control centre (added in v2.0.0)
+electron-app/node_modules/
+electron-app/dist/
+electron-app/release/
+electron-app/.smoke/
+electron-app/.devdata/
+electron-app/.pytest_cache/
+electron-app/electron-python.json
+node_modules/
+
+# PyInstaller output for the optional bundled engine
+electron-app/build/engine/
+electron-app/build/engine.spec.bak

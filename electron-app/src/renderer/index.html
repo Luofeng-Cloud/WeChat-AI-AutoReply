@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>微信AI自动回复 · 控制中心</title>
+  </head>
+  <body>
+    <div id="app" class="app">
+      <header class="titlebar" data-drag>
+        <div class="titlebar__brand">
+          <span class="titlebar__mark" aria-hidden="true">AI</span>
+          <div class="titlebar__text">
+            <strong>微信AI自动回复</strong>
+            <span>控制中心 · Electron 版</span>
+          </div>
+        </div>
+        <div class="titlebar__actions" data-no-drag>
+          <button class="iconbtn" data-action="toggle-devtools" title="开发者工具">⌘</button>
+          <button class="iconbtn" data-action="minimize" title="最小化">—</button>
+          <button class="iconbtn" data-action="maximize" title="最大化">▢</button>
+          <button class="iconbtn iconbtn--danger" data-action="close" title="关闭">✕</button>
+        </div>
+      </header>
+
+      <div class="shell">
+        <nav class="rail" id="rail" aria-label="主导航"></nav>
+        <main class="stage" id="stage"></main>
+      </div>
+
+      <footer class="statusbar" id="statusbar"></footer>
+    </div>
+
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+    <div class="modal-root" id="modal-root"></div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

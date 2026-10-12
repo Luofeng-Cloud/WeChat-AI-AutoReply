@@ -1,0 +1,57 @@
+# Windows installer configuration.
+#
+# appId is stable so upgrades replace the previous install rather than stacking.
+appId: com.luofeng.wechat-ai-autoreply
+productName: 微信AI自动回复
+copyright: Copyright © 2024 Luofeng-Cloud
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+  - "!**/*.map"
+
+# The Python engine ships beside the app, not inside the asar: it is executed by an
+# interpreter, and asar contents are not real files on disk.
+extraResources:
+  - from: wechat_engine
+    to: engine/wechat_engine
+    filter:
+      - "**/*.py"
+      - "!**/__pycache__/**"
+  - from: requirements.txt
+    to: engine/requirements.txt
+  - from: wechat_sky_blue_unread_ai_v4.ico
+    to: engine/wechat_sky_blue_unread_ai_v4.ico
+
+win:
+  # Kept byte-identical to the filename the README download badge points at, so
+  # "latest/download/WeChat-AI-AutoReply_Setup.exe" keeps working for existing users.
+  artifactName: WeChat-AI-AutoReply_Setup.${ext}
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: wechat_sky_blue_unread_ai_v4.ico
+  signtoolOptions:
+    # Signing is optional; CI builds unsigned and users see a SmartScreen prompt.
+    signingHashAlgorithms: ["sha256"]
+  legalTrademarks: MIT License
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 微信AI自动回复
+  # Do not delete the engine data directory on uninstall: it holds the user API key and
+  # their whitelist, and silently discarding credentials on an uninstall is hostile.
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
+  artifactName: WeChat-AI-AutoReply_Setup.${ext}
+
+publish: null

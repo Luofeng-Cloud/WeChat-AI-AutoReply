@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Windows-only PowerShell helper: keep CRLF so it runs from Explorer and Task Scheduler.
+*.ps1 text eol=crlf
+
+# Installer inputs.
+*.ico binary
+*.onnx binary
+*.exe binary
