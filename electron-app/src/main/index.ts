@@ -165,10 +165,72 @@ app.on("before-quit", async (event) => {
   try {
     await engine.stop();
   } finally {
-    app.exit(0);
+    // A fatal error means the process is in an undefined state; a non-zero exit code
+    // surfaces that to whatever launched the app instead of hiding it.
+    app.exit(fatalError ? 1 : 0);
   }
 });
 
-process.on("uncaughtException", (error) => {
-  console.error("[main] uncaught exception", error);
-});
+/**
+ * Crash containment.
+ *
+ * Electron installs its own uncaughtException listener that shows a *modal* dialog. When
+ * the failure is an EPIPE from replying to a renderer that already closed its IPC pipe,
+ * the main process is what died -- so the dialog it just opened has no message loop and
+ * cannot be dismissed by clicking. That is a zombie window the user cannot get rid of
+ * without killing the process.
+ *
+ * The default listener is therefore removed and replaced. The raw listener is captured
+ * first so removing it is safe on Electron versions that also wire up native crash
+ * reporting: if removal ever stops working, behaviour falls back to today rather than
+ * losing the reporter.
+ */
+const electronDefaultListeners = process.listeners("uncaughtException");
+process.removeAllListeners("uncaughtException");
+
+let fatalError: Error | null = null;
+
+let exiting = false;
+
+function reportFatal(kind: string, error: unknown): void {
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  console.error(`[main] ${kind}:`, detail);
+  if (!fatalError) fatalError = error instanceof Error ? error : new Error(String(error));
+
+  // Suppressing the dialog is only half the job: a process that logs and keeps running is
+  // a zombie with no message loop, which is just as unkillable for the user. Report, give
+  // the window a moment to show the reason, then exit non-zero.
+  if (exiting) return;
+  exiting = true;
+
+  try {
+    mainWindow?.webContents.send(IPC.engineState, {
+      state: "crashed",
+      detail: `主进程发生未捕获异常（${kind}）：${detail.split("\n")[0]}`,
+    });
+  } catch {
+    /* the window may already be gone; exiting still matters */
+  }
+
+  // Hard deadline: if the graceful path stalls, the process must still die.
+  const fallback = setTimeout(() => app.exit(1), 5000);
+  fallback.unref?.();
+
+  setTimeout(() => {
+    void engine
+      .stop(3000)
+      .catch(() => undefined)
+      .finally(() => {
+        clearTimeout(fallback);
+        app.exit(1);
+      });
+  }, 1500);
+}
+
+process.on("uncaughtException", (error) => reportFatal("uncaughtException", error));
+process.on("unhandledRejection", (reason) => reportFatal("unhandledRejection", reason));
+
+/** Re-install the captured Electron listeners; used only by tests and diagnostics. */
+export function restoreElectronDefaultListeners(): void {
+  for (const listener of electronDefaultListeners) process.on("uncaughtException", listener);
+}
