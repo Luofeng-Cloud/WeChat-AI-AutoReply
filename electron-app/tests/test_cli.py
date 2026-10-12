@@ -12,8 +12,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -28,7 +26,6 @@ def run_cli(args, timeout=90):
     )
 
 
-@pytest.mark.slow
 class TestCallMode:
     def test_call_prints_only_the_result_object(self, data_dir, monkeypatch):
         monkeypatch.setenv("WECHAT_ENGINE_DATA_DIR", str(data_dir))
@@ -69,7 +66,6 @@ class TestCallMode:
         assert completed.returncode != 0
 
 
-@pytest.mark.slow
 class TestSelftest:
     def test_selftest_reports_without_crashing(self, data_dir, monkeypatch):
         monkeypatch.setenv("WECHAT_ENGINE_DATA_DIR", str(data_dir))
