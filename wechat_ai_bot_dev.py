@@ -369,6 +369,23 @@ def normalize_for_match(text):
     t_clean = re.sub(r'[\^_\~\-\.\,\'\"\`\*\#\@\!\:\;\|\/\\]', '', t)
     return t_clean
 
+def is_group_chat_name(text):
+    if not text:
+        return False
+    t = str(text).strip()
+    # 1. 明确包含群聊关键词
+    if re.search(r'群聊|交流群|互助群|通知群|工作群|家族群|同乡群|部门群', t):
+        return True
+    # 2. 名字末尾紧贴括号人数: 如 '吃喝玩乐(25)' 或 '吃喝玩乐（25）'
+    name_seg = re.split(r'\s+', t, maxsplit=1)[0]
+    if re.search(r'[\(（]\d+[\)）]$', name_seg):
+        return True
+    # 3. 名字与括号人数带空格: 如 '吃喝玩乐 (25)' 或 '吃喝玩乐 (25) 好的' (第2段纯为括号人数)
+    parts = re.split(r'\s+', t)
+    if len(parts) >= 2 and re.match(r'^[\(（]\d+[\)）]$', parts[1]):
+        return True
+    return False
+
 def is_name_matched_strict(contact_name, whitelist):
     if not contact_name or len(str(contact_name).strip()) < 2:
         return False, ""
@@ -381,8 +398,8 @@ def is_name_matched_strict(contact_name, whitelist):
         raw_variants.append(stripped)
 
     for r in raw_variants:
-        # 群聊与非白名单防火墙：精准检测群人数标识 (如 "(25)"、" (25)") 与群关键词，排除消息预览中带量词的括号数字 (如 "(3)个文件")
-        if re.search(r'[\(（]\d+[\)）](?![个条张件份位本只页])|群聊|交流群|互助群|通知群|工作群|家族群|同乡群|部门群', r):
+        # 群聊防火墙：精准检测群人数标识 (如 "(25)"、" (25)") 与群关键词，排除消息预览中的量词数字 (如 "(2)楼"、"(5)分")
+        if is_group_chat_name(r):
             return False, ""
 
     for r in raw_variants:
@@ -622,8 +639,8 @@ def generate_ai_reply(sender, message_content):
         )
     
     oa = cfg.get("openai_api") or {}
-    api_base = cfg.get("api_url") or oa.get("api_base") or "https://api.xiaomimimo.com/v1"
-    url = api_base if api_base.endswith("/chat/completions") else f"{api_base.rstrip('/')}/chat/completions"
+    api_base = str(cfg.get("api_url") or oa.get("api_base") or "https://api.xiaomimimo.com/v1").strip().rstrip("/")
+    url = api_base if api_base.endswith("/chat/completions") else f"{api_base}/chat/completions"
     key = cfg.get("api_key") or oa.get("api_key") or ""
     model = cfg.get("api_model") or oa.get("model") or "mimo-v2.6-flash"
     temperature = cfg_float(oa, "temperature", 0.7)
@@ -975,8 +992,8 @@ def scan_and_reply_wechat(hwnd):
         n = str(name_str).strip()
         if any(b_name in n for b_name in blacklist if b_name.strip()):
             return False
-        # 群聊防火墙：精准检测群人数标识 (如 "(25)"、" (25)") 与群关键词，排除消息预览中带量词的括号数字 (如 "(3)个文件")
-        if re.search(r'[\(（]\d+[\)）](?![个条张件份位本只页])|群聊|交流群|互助群|通知群|工作群|家族群|同乡群|部门群', n):
+        # 群聊防火墙：精准检测群人数标识 (如 "(25)"、" (25)") 与群关键词，排除消息预览中的量词数字 (如 "(2)楼"、"(5)分")
+        if is_group_chat_name(n):
             return False
         if n in ["微信", "搜索", "文件传输助手", "朋友圈", "订阅号", "服务通知", "腾讯新闻"]:
             return False
@@ -1051,8 +1068,7 @@ def scan_and_reply_wechat(hwnd):
     else:
         # 非白名单模式：允许回复普通单人好友，强制过滤黑名单、服务号与群聊
         if active_right_title and is_valid_non_whitelist_target(active_right_title):
-            clean_right = re.sub(r'^\d{1,2}(?=[^\d])', '', active_right_title).strip()
-            current_active_target = re.split(r'\s+', clean_right, maxsplit=1)[0].strip()
+            current_active_target = active_right_title.strip()
         elif active_green_text and is_valid_non_whitelist_target(active_green_text):
             clean_green = re.sub(r'^\d{1,2}(?=[^\d])', '', active_green_text).strip()
             current_active_target = re.split(r'\s+', clean_green, maxsplit=1)[0].strip()

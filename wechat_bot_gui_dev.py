@@ -660,11 +660,23 @@ class WeChatBotGUI(tk.Tk):
             cmdline = proc.cmdline() or []
             cmd_str = " ".join(str(c) for c in cmdline).lower()
             name = (proc.name() or '').lower()
-            # 严格排除 GUI、稳定版和其它
-            if "gui" in name or "控制中心" in name or "wechat_bot_gui" in cmd_str:
+
+            # 1. 严格排除所有形态的 GUI 控制中心 (GUI 绝对豁免，优先判定)
+            gui_keywords = [
+                "gui", "控制中心", "wechat_bot_gui",
+                "微信ai自动回复", "微信ai回复(开发版)", "微信ai回复（开发版）", "微信ai回复-开发版"
+            ]
+            if any(k in name or k in cmd_str for k in gui_keywords):
                 return False
-            # 必须命中开发版特征 (wechat_ai_bot_dev 或 wechat_ai_bot_dev.exe 或 微信ai回复_开发版)
-            if "wechat_ai_bot_dev" in cmd_str or "wechat_ai_bot_dev" in name or "微信ai回复_开发版" in cmd_str:
+
+            # 2. 严格排除稳定版与其它无关进程
+            if "稳定版" in cmd_str or "wechat_ai_bot_stable" in cmd_str:
+                return False
+
+            # 3. 精准命中开发版后台守护核心 (源码模式与打包模式)
+            if "wechat_ai_bot_dev" in name or "wechat_ai_bot_dev.py" in cmd_str:
+                return True
+            if "wechat_ai_bot" in name and "微信ai回复_开发版" in cmd_str:
                 return True
         except Exception:
             pass
