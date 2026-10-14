@@ -381,10 +381,8 @@ def is_name_matched_strict(contact_name, whitelist):
         raw_variants.append(stripped)
 
     for r in raw_variants:
-        # 群聊与非白名单防火墙：只检测"名字段"(会话行可能携带消息预览，
-        # 预览里的括号数字如 "一共(3)个文件" 不应误伤真实好友)
-        name_seg = re.split(r'\s+', r, maxsplit=1)[0]
-        if re.search(r'[\(（]\d+[\)）](\s|$)|\[\d+条\]|群聊|交流群|互助群|通知群|工作群|家族群|同乡群|部门群', name_seg):
+        # 群聊与非白名单防火墙：精准检测群人数标识 (如 "(25)"、" (25)") 与群关键词，排除消息预览中带量词的括号数字 (如 "(3)个文件")
+        if re.search(r'[\(（]\d+[\)）](?![个条张件份位本只页])|群聊|交流群|互助群|通知群|工作群|家族群|同乡群|部门群', r):
             return False, ""
 
     for r in raw_variants:
@@ -455,7 +453,7 @@ def extract_active_chat_title(res, layout):
     header_h = layout["header_h"]
     total_w = layout["total_w_px"]
     
-    title_parts = []
+    title_candidates = []
     for b, txt, sc in (res or []):
         cx = (b[0][0] + b[1][0]) / 2.0
         cy = (b[0][1] + b[2][1]) / 2.0
@@ -465,9 +463,11 @@ def extract_active_chat_title(res, layout):
         if (chat_start_x - 30) <= cx <= (chat_start_x + int(0.42 * (total_w - chat_start_x))) and cy <= header_h:
             if t_clean in ["最小化", "最大化", "关闭", "设置", "聊天信息", "搜索", "表情", "发送", "文件", "截图", "语音聊天", "视频聊天", "…", "...", "口", "-", "x", "X"]:
                 continue
-            title_parts.append(t_clean)
+            title_candidates.append((cx, t_clean))
             
-    return " ".join(title_parts)
+    # 按水平从左到右严格排序，确保分段识别的标题词序绝对正确
+    title_candidates.sort(key=lambda x: x[0])
+    return " ".join(t for _, t in title_candidates)
 
 # =============================================================================
 # 5. CHROMATIC BUBBLE PARSER & MULTI-LINE AGGREGATION
@@ -888,8 +888,8 @@ def send_reply_instant(hwnd, rect, layout, target, final_reply):
             log(f"⚠️ [发送闭环验收未通过(尝试 {attempt}/2)] 未检测到新长出的绿底气泡增量，执行强力二次重试...")
             time.sleep(0.12)
             
-    # 还原用户原本的剪贴板
-    if user_old_clip is not None:
+    # 还原用户原本的剪贴板 (仅当原剪贴板为非空文本时写回，避免冲掉用户复制的图片/文件)
+    if user_old_clip:
         safe_clipboard_copy(user_old_clip, retries=2, delay=0.02)
         
     if send_success and send_unverified:
@@ -975,9 +975,8 @@ def scan_and_reply_wechat(hwnd):
         n = str(name_str).strip()
         if any(b_name in n for b_name in blacklist if b_name.strip()):
             return False
-        # 群聊防火墙只检测"名字段"（会话行可能携带消息预览，预览里的括号数字不误伤好友）
-        name_seg = re.split(r'\s+', n, maxsplit=1)[0]
-        if re.search(r'[\(（]\d+[\)）](\s|$)|\[\d+条\]|群聊|交流群|互助群|通知群|工作群|家族群|同乡群|部门群', name_seg):
+        # 群聊防火墙：精准检测群人数标识 (如 "(25)"、" (25)") 与群关键词，排除消息预览中带量词的括号数字 (如 "(3)个文件")
+        if re.search(r'[\(（]\d+[\)）](?![个条张件份位本只页])|群聊|交流群|互助群|通知群|工作群|家族群|同乡群|部门群', n):
             return False
         if n in ["微信", "搜索", "文件传输助手", "朋友圈", "订阅号", "服务通知", "腾讯新闻"]:
             return False
@@ -1022,7 +1021,9 @@ def scan_and_reply_wechat(hwnd):
             matched, target = is_name_matched_strict(text_clean, whitelist)
         else:
             matched = is_valid_non_whitelist_target(text_clean)
-            target = text_clean.strip()
+            # 提取纯净的好友昵称（剥离行首红点计数与尾部消息预览）
+            clean_name = re.sub(r'^\d{1,2}(?=[^\d])', '', text_clean).strip()
+            target = re.split(r'\s+', clean_name, maxsplit=1)[0].strip()
         if matched and has_red_badge_by_text_anchor(arr_wechat, b, layout):
             red_badge_candidates.append((cy, target))
                 
@@ -1050,9 +1051,11 @@ def scan_and_reply_wechat(hwnd):
     else:
         # 非白名单模式：允许回复普通单人好友，强制过滤黑名单、服务号与群聊
         if active_right_title and is_valid_non_whitelist_target(active_right_title):
-            current_active_target = active_right_title.strip()
+            clean_right = re.sub(r'^\d{1,2}(?=[^\d])', '', active_right_title).strip()
+            current_active_target = re.split(r'\s+', clean_right, maxsplit=1)[0].strip()
         elif active_green_text and is_valid_non_whitelist_target(active_green_text):
-            current_active_target = active_green_text.strip()
+            clean_green = re.sub(r'^\d{1,2}(?=[^\d])', '', active_green_text).strip()
+            current_active_target = re.split(r'\s+', clean_green, maxsplit=1)[0].strip()
     
     if current_active_target:
         chat_bubbles = parse_chat_bubbles_chromatic(res, img_wechat, layout, ignored_keywords)
@@ -1117,12 +1120,12 @@ def scan_and_reply_wechat(hwnd):
                         # 生成回复为空（如未填 Key 或 API 异常），记录告警并登记签名防空转
                         log(f"⚠️ [AI生成跳过] 好友【{current_active_target}】消息未获得有效AI回复 (API超时/网络抖动或未配Key)，登记签名防空转。")
                         LAST_PROCESSED_SIGNATURE[current_active_target] = current_sig
-                
-                # 只要当前会话存在待回复/刚回复的消息，直接 return，100% 物理阻断后续任何红点跳转！
-                return
-            elif chat_bubbles[-1]['is_incoming']:
-                # 即使最新一条消息处于特殊状态，只要属于好友发出，绝对坚守当前窗口！
-                return
+
+                    # 本次已处理新消息，返回结束本轮调度
+                    return
+                elif current_sig in SEND_FAIL_RETRY:
+                    # 处于重试等待中，坚守当前窗口
+                    return
 
     # -------------------------------------------------------------------------
     # 协同通道 B: 只有确认当前会话已彻底回完(最新为我发出的绿底)，才极速切入其他白名单好友红点

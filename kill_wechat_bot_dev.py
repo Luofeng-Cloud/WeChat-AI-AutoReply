@@ -15,6 +15,19 @@ except Exception:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PID_FILE = os.path.join(BASE_DIR, "wechat_bot_dev.pid")
 
+def is_target_bot_process(proc):
+    try:
+        cmdline = proc.cmdline() or []
+        cmd_str = " ".join(str(c) for c in cmdline).lower()
+        name = (proc.name() or '').lower()
+        if "gui" in name or "控制中心" in name or "wechat_bot_gui" in cmd_str:
+            return False
+        if "wechat_ai_bot_dev" in cmd_str or "wechat_ai_bot_dev" in name or "微信ai回复_开发版" in cmd_str or "微信ai回复(开发版)" in name or "微信ai自动回复" in name:
+            return True
+    except Exception:
+        pass
+    return False
+
 def kill_wechat_bot():
     my_pid = os.getpid()
     
@@ -27,13 +40,7 @@ def kill_wechat_bot():
                 pid = int(pid_str)
                 if pid != my_pid and psutil.pid_exists(pid):
                     p = psutil.Process(pid)
-                    try:
-                        cmd = " ".join(p.cmdline() or []).lower()
-                        name = p.name().lower()
-                    except Exception:
-                        cmd = ""
-                        name = ""
-                    if ("wechat_ai_bot_dev" in cmd or "wechat_ai_bot_dev" in name) and ("wechat_bot_gui" not in cmd and "wechat_bot_gui" not in name):
+                    if is_target_bot_process(p):
                         p.kill()
                         print(f"Terminated WeChat Bot Dev by PID {pid}")
         except Exception:
@@ -43,17 +50,12 @@ def kill_wechat_bot():
         except Exception:
             pass
 
-    # 2. Iterate processes and kill only wechat_ai_bot_dev
+    # 2. Iterate processes and kill only dev bot processes
     for p in psutil.process_iter():
         try:
             if p.pid == my_pid:
                 continue
-            name = p.name().lower()
-            try:
-                cmd = " ".join(p.cmdline() or []).lower()
-            except Exception:
-                cmd = ""
-            if ("wechat_ai_bot_dev" in name or "wechat_ai_bot_dev.py" in cmd) and ("wechat_bot_gui" not in cmd and "wechat_bot_gui" not in name):
+            if is_target_bot_process(p):
                 p.kill()
                 print(f"Terminated WeChat Bot Dev PID: {p.pid}")
         except Exception:
