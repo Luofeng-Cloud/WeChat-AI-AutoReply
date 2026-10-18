@@ -3,7 +3,6 @@ import sys
 import json
 import time
 import re
-import subprocess
 import tempfile
 import threading
 import psutil
@@ -208,6 +207,11 @@ class WeChatBotGUI(tk.Tk):
                 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
                     default.update(loaded)
+                    # 健壮性：手改配置可能把名单写成 null/非字符串列表，统一纠正防启动崩溃
+                    wl = default.get("whitelist")
+                    default["whitelist"] = [w for w in wl if isinstance(w, str)] if isinstance(wl, list) else []
+                    bl = default.get("blacklist")
+                    default["blacklist"] = [b for b in bl if isinstance(b, str)] if isinstance(bl, list) else []
             except Exception as e:
                 print(f"Error loading config: {e}")
         return default

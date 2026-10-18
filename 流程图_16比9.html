@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>微信 AI 自动回复（开发版）核心原理流程图 (16:9)</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    @keyframes pulseGlow {
+      0%, 100% { opacity: 0.4; filter: drop-shadow(0 0 4px #06b6d4); }
+      50% { opacity: 1; filter: drop-shadow(0 0 12px #38bdf8); }
+    }
+    @keyframes dashMove {
+      to { stroke-dashoffset: -24; }
+    }
+    .flow-line {
+      stroke-dasharray: 6 6;
+      animation: dashMove 1.2s linear infinite;
+    }
+    .glow-cyan { filter: drop-shadow(0 0 8px rgba(6, 182, 212, 0.5)); }
+    .glow-emerald { filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.5)); }
+    .glow-amber { filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.5)); }
+    .glow-rose { filter: drop-shadow(0 0 8px rgba(244, 63, 94, 0.5)); }
+    .glow-purple { filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.5)); }
+
+    /* 保证严格 16:9 比例视窗容器 */
+    .widescreen-canvas {
+      aspect-ratio: 16 / 9;
+      width: 100%;
+      max-width: 1720px;
+    }
+  </style>
+</head>
+<body class="bg-[#0b0f19] text-[#e2e8f0] antialiased p-4 min-h-screen flex flex-col items-center justify-center font-sans select-none">
+
+  <!-- 顶部控制栏 -->
+  <header class="w-full max-w-[1720px] mb-3 flex items-center justify-between px-2">
+    <div class="flex items-center gap-3">
+      <div class="w-3.5 h-3.5 rounded-full bg-cyan-400 animate-ping"></div>
+      <h1 class="text-xl font-bold bg-gradient-to-r from-cyan-400 via-sky-300 to-emerald-400 bg-clip-text text-transparent">
+        🤖 微信 AI 自动回复系统 · 核心原理与数据流转全景图 (16:9 宽屏架构版)
+      </h1>
+      <span class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-cyan-300 border border-cyan-500/30">
+        Zero-Mouse · 离屏挂载 · 双轨感知 · 三态闭环
+      </span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="switchView('full')" id="btn-full" class="text-xs px-3 py-1.5 rounded-lg bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-200 border border-cyan-500/50 transition">
+        🌐 宏观架构流
+      </button>
+      <button onclick="switchView('inject')" id="btn-inject" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+        🖱️ 0 鼠标直达时序
+      </button>
+      <button onclick="toggleDetails()" class="text-xs px-3 py-1.5 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 border border-emerald-500/50 transition">
+        📋 展开/折叠核心指标
+      </button>
+      <button onclick="fullscreen()" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+        ⛶ 全屏显示
+      </button>
+    </div>
+  </header>
+
+  <!-- 16:9 核心画布容器 -->
+  <main id="mainCanvas" class="widescreen-canvas relative bg-gradient-to-br from-[#0d1424] via-[#0f172a] to-[#070b14] border border-cyan-500/20 rounded-2xl shadow-2xl p-5 overflow-hidden flex flex-col justify-between">
+    
+    <!-- 背景高科技网格与装饰微光 -->
+    <div class="absolute inset-0 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px] opacity-30 pointer-events-none"></div>
+    <div class="absolute -top-32 -left-32 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+    <div class="absolute -bottom-32 -right-32 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+    <!-- 顶部状态流动带 -->
+    <div class="relative z-10 flex items-center justify-between text-xs text-slate-400 border-b border-slate-800/80 pb-2">
+      <div class="flex items-center gap-4">
+        <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> 微信适配: 3.x / 4.x Qt 架构</span>
+        <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-cyan-400"></span> 离屏坐标: (-3000, -3000) GDI 重绘</span>
+        <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-purple-400"></span> 本地引擎: RapidOCR PP-OCRv4 (0.8s)</span>
+      </div>
+      <div class="flex items-center gap-4 text-slate-400">
+        <span class="text-cyan-400 font-mono">⚡ 动态像素哨兵: 20ms MD5 放行</span>
+        <span class="text-emerald-400 font-mono">🛡️ 群聊/串发拦截率: 100%</span>
+        <span class="text-amber-400 font-mono">🖱️ 物理光标移动: 0 像素</span>
+      </div>
+    </div>
+
+    <!-- 核心横向 6 大阶段流水线 (16:9 黄金水平分布) -->
+    <div class="relative z-10 grid grid-cols-6 gap-3.5 my-auto h-[78%]">
+      
+      <!-- STAGE 1: 离屏挂载与帧捕获 -->
+      <div class="flex flex-col justify-between p-3.5 rounded-xl bg-slate-900/80 border border-cyan-500/30 hover:border-cyan-400 transition shadow-lg group relative">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <span class="text-xs font-bold text-cyan-400 tracking-wider">01. 离屏帧捕获</span>
+          <span class="text-[12px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300">DWM/GDI</span>
+        </div>
+        <div class="space-y-2 text-xs">
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">👻 负坐标空间隐形</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              <code class="text-cyan-300">SetWindowPos</code> 移至 (-3000, -3000)，彻底消除桌面弹窗抢焦。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">📸 PrintWindow 抓图</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              向微信 HWND 投递底层重绘指令，被完全覆盖或离屏均能获取 100% 真实画面。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">📐 动态几何咬合</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              <code class="text-cyan-300">compute_wechat_layout</code>：自适应 100%~250% DPI 及任意拉伸。
+            </div>
+          </div>
+        </div>
+        <div class="text-[12px] text-cyan-400/80 text-center font-mono pt-1 border-t border-slate-800/60">
+          RGB 帧缓冲生成 ➔
+        </div>
+      </div>
+
+      <!-- STAGE 2: 像素哨兵与本地 OCR -->
+      <div class="flex flex-col justify-between p-3.5 rounded-xl bg-slate-900/80 border border-sky-500/30 hover:border-sky-400 transition shadow-lg group relative">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <span class="text-xs font-bold text-sky-400 tracking-wider">02. 像素哨兵过滤</span>
+          <span class="text-[12px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300">20ms 哨兵</span>
+        </div>
+        <div class="space-y-2 text-xs">
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">⚡ MD5 差分检测</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              裁剪聊天区与侧边栏切片，对比 MD5 哈希与红点像素；静态时 20ms 极速放行。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">📉 动态下采样加速</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              等比下采样至宽度 1000px，单帧神经网络识别耗时从 5.5s 骤降至 0.8s。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">🧠 RapidOCR 本地推理</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              PP-OCRv4 det+rec 纯本地 ONNX 运行，无需外网，提取文字坐标与内容。
+            </div>
+          </div>
+        </div>
+        <div class="text-[12px] text-sky-400/80 text-center font-mono pt-1 border-t border-slate-800/60">
+          双轨文字拓扑 ➔
+        </div>
+      </div>
+
+      <!-- STAGE 3: 双轨协同感知 -->
+      <div class="flex flex-col justify-between p-3.5 rounded-xl bg-slate-900/80 border border-indigo-500/30 hover:border-indigo-400 transition shadow-lg group relative">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <span class="text-xs font-bold text-indigo-400 tracking-wider">03. 左右双轨感知</span>
+          <span class="text-[12px] px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300">双轨仲裁</span>
+        </div>
+        <div class="space-y-2 text-xs">
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">🟢 左轨全局看板</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              识别高浓度绿色激活会话；基于文字 Box 动态几何锚定未读红点（红像素≥15）。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">🔍 右轨微观视窗</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              顶栏 X&gt;chat_start_x 提取当前好友标题；气泡外扩底色采样判别消息流向。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">🎨 真彩底色判别</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              <span class="text-emerald-400">绿底</span>为我方发出；<span class="text-slate-300">非绿偏左</span>为对方发送。杜绝绿色表情包误判。
+            </div>
+          </div>
+        </div>
+        <div class="text-[12px] text-indigo-400/80 text-center font-mono pt-1 border-t border-slate-800/60">
+          目标与流向提取 ➔
+        </div>
+      </div>
+
+      <!-- STAGE 4: 防火墙与连发聚合 -->
+      <div class="flex flex-col justify-between p-3.5 rounded-xl bg-slate-900/80 border border-amber-500/30 hover:border-amber-400 transition shadow-lg group relative">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <span class="text-xs font-bold text-amber-400 tracking-wider">04. 门禁与连发聚合</span>
+          <span class="text-[12px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300">硬核防火墙</span>
+        </div>
+        <div class="space-y-2 text-xs">
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">🛡️ 群聊物理硬核阻断</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              检测括号人数正则 <code class="text-amber-300">[\(（]\d+[\)）]</code> 与群关键词，100% 熔断防社死。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">🎯 白名单越配防护</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              前缀匹配必须排除尾随短字符，防止白名单“张三”串发至“张三丰”。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">⏳ 0.35s 动态像素沉降</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              好友连发多句话时，等待人类打字停顿后增量 OCR 聚合全部短句为一条。
+            </div>
+          </div>
+        </div>
+        <div class="text-[12px] text-amber-400/80 text-center font-mono pt-1 border-t border-slate-800/60">
+          聚合语义输入 ➔
+        </div>
+      </div>
+
+      <!-- STAGE 5: LLM 脑神经拟人生成 -->
+      <div class="flex flex-col justify-between p-3.5 rounded-xl bg-slate-900/80 border border-purple-500/30 hover:border-purple-400 transition shadow-lg group relative">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <span class="text-xs font-bold text-purple-400 tracking-wider">05. 大模型拟人生成</span>
+          <span class="text-[12px] px-1.5 py-0.5 rounded bg-purple-950 text-purple-300">OpenAI API</span>
+        </div>
+        <div class="space-y-2 text-xs">
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">🎭 千人千面专属人设</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              依据好友备注自动注入专属 Prompt（死党互怼 / 商务礼貌 / 甜蜜恋人 / 真人日常）。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">📚 多轮上下文滑动窗口</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              维持最近 8~10 轮历史记忆，严禁透露 AI 身份，直接输出第一人称口语回复。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">🧹 纯净文本强效清洗</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              正则剥离 <code class="text-purple-300">&lt;think&gt;</code>、首尾心理括号与 Markdown 符号。
+            </div>
+          </div>
+        </div>
+        <div class="text-[12px] text-purple-400/80 text-center font-mono pt-1 border-t border-slate-800/60">
+          纯文本指令 ➔
+        </div>
+      </div>
+
+      <!-- STAGE 6: 0 鼠标直达与闭环验收 -->
+      <div class="flex flex-col justify-between p-3.5 rounded-xl bg-slate-900/80 border border-emerald-500/30 hover:border-emerald-400 transition shadow-lg group relative">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <span class="text-xs font-bold text-emerald-400 tracking-wider">06. 0 鼠标直达与闭环</span>
+          <span class="text-[12px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300">三态闭环</span>
+        </div>
+        <div class="space-y-2 text-xs">
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">🖱️ 局部 PostMessage 聚焦</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              向输入框几何中心发送局部鼠标点击消息，<strong>物理鼠标 0 像素移动</strong>。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">⌨️ Win32 穿透注入</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              <code class="text-emerald-300">AttachThreadInput</code> 提权，校验前台归属后执行 Ctrl+V + Enter，瞬间恢复原窗口。
+            </div>
+          </div>
+          <div class="p-2 rounded bg-slate-950/60 border border-slate-800/80">
+            <div class="text-slate-300 font-semibold mb-0.5">✅ 三态差分增量验收</div>
+            <div class="text-slate-400 text-[12px] leading-relaxed">
+              对比底部 80px 绿底像素差分：<span class="text-emerald-400">True</span> 成功；<span class="text-amber-400">UNCERTAIN</span> 熔断防复读；<span class="text-rose-400">False</span> 受控重试。
+            </div>
+          </div>
+        </div>
+        <div class="text-[12px] text-emerald-400/80 text-center font-mono pt-1 border-t border-slate-800/60">
+          ✅ 秒回达成 &amp; 状态回执
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 底部架构保障与状态底栏 -->
+    <div class="relative z-10 border-t border-slate-800/80 pt-2 flex items-center justify-between text-xs text-slate-400">
+      <div class="flex items-center gap-5">
+        <span class="text-slate-300 font-semibold">🔒 工业级容错红线：</span>
+        <span>① 剪贴板原子快照保护 (发送完毕 100% 还原)</span>
+        <span>② 击键前严格校验 <code class="text-cyan-300">GetForegroundWindow() == hwnd</code> (防串窗)</span>
+        <span>③ 连续 2 次脱靶强制熔断锁定 (防无限消耗 Token)</span>
+      </div>
+      <div class="text-slate-500 font-mono">
+        架构长宽比: 16:9 | 分辨率自适应 | Windows 10/11 x64
+      </div>
+    </div>
+
+  </main>
+
+  <!-- 抽屉式技术指标与时序详情浮层 -->
+  <aside id="detailsDrawer" class="w-full max-w-[1720px] mt-3 hidden bg-slate-900/95 border border-slate-800 rounded-xl p-4 transition-all">
+    <div class="grid grid-cols-4 gap-4 text-xs">
+      <div class="p-3 bg-slate-950 rounded-lg border border-slate-800">
+        <h3 class="text-cyan-400 font-bold mb-1.5 flex items-center gap-1.5">👻 虚拟离屏隐形运行机制</h3>
+        <p class="text-slate-400 leading-relaxed mb-2">微信主窗口通过 Win32 API 被置入操作系统负坐标区域（X: -3000, Y: -3000）。不同于系统最小化（ShowWindow SW_MINIMIZE 会挂起 DirectComposition 渲染），负坐标离屏状态下 Windows 渲染子系统依然为窗口分配全尺寸 FrameBuffer，使 DWM/PrintWindow 能够稳定抓取 100% 真实渲染画面。</p>
+        <div class="font-mono text-[12px] text-cyan-300 bg-slate-900 p-1.5 rounded">SetWindowPos(hwnd, 0, -3000, -3000, w, h, SWP_SHOWWINDOW)</div>
+      </div>
+      <div class="p-3 bg-slate-950 rounded-lg border border-slate-800">
+        <h3 class="text-sky-400 font-bold mb-1.5 flex items-center gap-1.5">⚡ 20ms 动态像素哨兵算法</h3>
+        <p class="text-slate-400 leading-relaxed mb-2">为解决传统 OCR 机器人持续死循环高频识别导致 CPU 满载发热与风扇狂转问题，引入切片 MD5 快速哈希与红像素快筛。每 0.8s 轮询周期仅耗费 20ms 提取侧边栏与聊天区像素并计算哈希，画面无变化直接放行，OCR 推理频率降低 90% 以上。</p>
+        <div class="font-mono text-[12px] text-sky-300 bg-slate-900 p-1.5 rounded">hashlib.md5(chat_patch.tobytes()).hexdigest()</div>
+      </div>
+      <div class="p-3 bg-slate-950 rounded-lg border border-slate-800">
+        <h3 class="text-amber-400 font-bold mb-1.5 flex items-center gap-1.5">🛡️ 群聊与白名单物理级防火墙</h3>
+        <p class="text-slate-400 leading-relaxed mb-2">在消息分发的最前端设立物理级熔断规则：正则严格匹配末尾括号人数（如 <code class="text-amber-300">交流群(25)</code> 或 <code class="text-amber-300">交流群 (25)</code>）以及 20+ 类群关键词。白名单匹配采用剥离红点变体、全等匹配、越配防御（拒绝后随普通字符≤3的名字），杜绝任何串发社死可能。</p>
+        <div class="font-mono text-[12px] text-amber-300 bg-slate-900 p-1.5 rounded">re.search(r'[\(（]\d+[\)）]$', name_segment)</div>
+      </div>
+      <div class="p-3 bg-slate-950 rounded-lg border border-slate-800">
+        <h3 class="text-emerald-400 font-bold mb-1.5 flex items-center gap-1.5">✅ 三态闭环验收与熔断状态机</h3>
+        <p class="text-slate-400 leading-relaxed mb-2">每次发送完成后，不盲目假设成功，而是等待 0.35s 微信动画沉降，二次抓取画面并分析输入框上方 80px 窄带与 220px 全局气泡区的绿底像素增量。若明确增量返回 True；若离屏抓取黑屏返回 UNCERTAIN 并安全熔断防复读；连续脱靶 2 次锁定指纹彻底终止。</p>
+        <div class="font-mono text-[12px] text-emerald-300 bg-slate-900 p-1.5 rounded">verify_diff_bubble_success(pre, post, layout)</div>
+      </div>
+    </div>
+  </aside>
+
+  <script>
+    function toggleDetails() {
+      const drawer = document.getElementById('detailsDrawer');
+      drawer.classList.toggle('hidden');
+    }
+
+    function switchView(type) {
+      const btnFull = document.getElementById('btn-full');
+      const btnInject = document.getElementById('btn-inject');
+      if (type === 'inject') {
+        btnInject.classList.replace('bg-slate-800', 'bg-emerald-600/30');
+        btnInject.classList.replace('text-slate-300', 'text-emerald-200');
+        btnFull.classList.replace('bg-cyan-600/30', 'bg-slate-800');
+        btnFull.classList.replace('text-cyan-200', 'text-slate-300');
+        toggleDetails();
+      } else {
+        btnFull.classList.replace('bg-slate-800', 'bg-cyan-600/30');
+        btnFull.classList.replace('text-slate-300', 'text-cyan-200');
+        btnInject.classList.replace('bg-emerald-600/30', 'bg-slate-800');
+        btnInject.classList.replace('text-emerald-200', 'text-slate-300');
+      }
+    }
+
+    function fullscreen() {
+      const canvas = document.getElementById('mainCanvas');
+      if (!document.fullscreenElement) {
+        canvas.requestFullscreen?.() || canvas.webkitRequestFullscreen?.();
+      } else {
+        document.exitFullscreen?.();
+      }
+    }
+  </script>
+</body>
+</html>

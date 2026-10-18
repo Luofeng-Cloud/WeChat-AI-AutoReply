@@ -9,7 +9,6 @@ from ctypes import wintypes
 import numpy as np
 from PIL import Image, ImageGrab
 import requests
-import psutil
 import pyperclip
 from rapidocr_onnxruntime import RapidOCR
 
@@ -419,13 +418,14 @@ def is_name_matched_strict(contact_name, whitelist):
             if norm_ocr == norm_w:
                 return True, t_clean
             # 2. 前缀精准匹配（例如会话行 "张三 好的收到" / "张三 [图片]" 必须以好友名字开头）
-            #    越配防护：原文中名字紧跟普通字符且尾段极短 (≤3 字) 时，
-            #    疑似是更长的另一个名字 (如白名单"张三"遇到"张三丰")，拒绝命中防止串发
+            #    越配防护：原文中名字后紧跟普通字符（字母/数字/汉字，即疑似更长的另一个名字，
+            #    如白名单"张三"遇到"张三丰"/"张三丰大碗面"）时一律拒绝命中防止串发；
+            #    仅当名字后为空白/标点/结尾（真·名+预览分隔）才放行
             if norm_ocr.startswith(norm_w):
                 m = re.match(re.escape(t_clean), r, re.IGNORECASE)
                 if m:
                     tail = r[m.end():]
-                    if tail and re.match(r'[0-9A-Za-z\u4e00-\u9fff]', tail[0]) and len(tail.strip()) <= 3:
+                    if tail and re.match(r'[0-9A-Za-z\u4e00-\u9fff]', tail[0]):
                         continue
                 return True, t_clean
             # 3. 极小截断容错（仅当 OCR 极轻微少识别尾部 1 个字符时允许）
@@ -816,8 +816,22 @@ def send_reply_instant(hwnd, rect, layout, target, final_reply):
                     
         if found_cand_y is not None:
             post_click_client_point(hwnd, int(0.16 * cur_W), int(found_cand_y))
-            time.sleep(0.10)
-            log(f"🎯 [后台静默纠偏] 已重新切入【{target}】聊天视窗")
+            time.sleep(0.30)  # 等待 Qt5 完成右侧视窗切换渲染
+            # 🔥 纠偏后二次核验：重新抓图 OCR 顶栏，绝不盲信点击一定生效（防串发红线）
+            img_chk, _, _ = grab_wechat_window(hwnd)
+            if not img_chk:
+                log(f"🚫 [安全熔断] 纠偏后无法抓图复核顶栏，放弃本次发送防串发！")
+                return False
+            chk_W, chk_H = img_chk.size
+            chk_layout = compute_wechat_layout(chk_W, chk_H)
+            hdr = img_chk.crop((0, 0, chk_W, int(chk_layout["header_h"] + 15)))
+            res_hdr_raw, _ = ocr_engine(hdr)
+            res_hdr = [([[pt[0], pt[1]] for pt in b], txt, sc) for b, txt, sc in (res_hdr_raw or [])]
+            chk_title = extract_active_chat_title(res_hdr, chk_layout)
+            if not (chk_title and is_name_matched_strict(chk_title, [target])[0]):
+                log(f"🚫 [安全熔断] 纠偏后顶栏仍为【{chk_title or '非目标'}】，点击未生效，放弃本次发送防串发！")
+                return False
+            log(f"🎯 [后台静默纠偏] 已重新切入【{target}】聊天视窗（顶栏复核通过）")
         else:
             log(f"🚫 [安全熔断] 未在列表中定位到目标【{target}】，放弃本次发送以防串发！")
             return False
@@ -982,8 +996,8 @@ def scan_and_reply_wechat(hwnd):
         return
         
     whitelist_mode = cfg.get("whitelist_mode", True)
-    whitelist = cfg.get("whitelist", [])
-    blacklist = cfg.get("blacklist", [])
+    whitelist = [w for w in (cfg.get("whitelist") or []) if isinstance(w, str)]
+    blacklist = [b for b in (cfg.get("blacklist") or []) if isinstance(b, str)]
     ignored_keywords = cfg.get("ignored_keywords", [])
 
     def is_valid_non_whitelist_target(name_str):

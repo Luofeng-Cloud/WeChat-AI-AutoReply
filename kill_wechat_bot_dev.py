@@ -1,6 +1,4 @@
 import os
-import sys
-import subprocess
 import psutil
 import ctypes
 
