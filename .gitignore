@@ -55,3 +55,6 @@ wechat_convo_map.json
 *.swo
 .DS_Store
 Thumbs.db
+
+# Local notes & documentation
+口述文案*.md
