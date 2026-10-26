@@ -22,10 +22,10 @@
 
 ### 📦 Windows 用户一键体验入口
 
-[![Download Release](https://img.shields.io/badge/🚀%20一键下载-Windows%20正式安装包%20(v1.0.5)-07C160?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases/latest/download/WeChat-AI-AutoReply_Setup.exe)
-[![Download Portable](https://img.shields.io/badge/🧰%20绿色便携-免安装压缩包%20(v1.0.5)-3776AB?style=for-the-badge&logo=zip&logoColor=white)](https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases/latest/download/WeChat-AI-AutoReply_Portable.zip)
+[![Download Release](https://img.shields.io/badge/🚀%20最新发布-Windows%20正式安装包与便携版-07C160?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases)
+[![All Releases](https://img.shields.io/badge/📦%20版本历史-GitHub%20Releases-3776AB?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases)
 
-*(无需配置 Python 环境，直接下载安装包或解压免安装便携版即可秒级开启！)*
+*(无需配置 Python 环境，请前往 Releases 页面获取最新安装包或免安装便携版！)*
 
 </div>
 
