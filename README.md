@@ -18,15 +18,6 @@
   </a>
 </p>
 
----
-
-### 📦 Windows 用户一键体验入口
-
-[![Download Release](https://img.shields.io/badge/🚀%20最新发布-Windows%20正式安装包与便携版-07C160?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases)
-[![All Releases](https://img.shields.io/badge/📦%20版本历史-GitHub%20Releases-3776AB?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases)
-
-*(无需配置 Python 环境，请前往 Releases 页面获取最新安装包或免安装便携版！)*
-
 </div>
 
 ---
@@ -68,16 +59,9 @@
 
 ---
 
-## 🚀 极简上手指南
+## 🚀 极简上手指南 (Quick Start)
 
-### 方式一：下载 Windows 一键安装包（推荐普通用户）
-
-1. 从 [Releases 页面](https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases/latest) 下载 微信AI自动回复_Setup.exe；
-2. 双击安装后运行桌面上的【微信AI自动回复】控制中心；
-3. 配置您的 API Key、将好友昵称加入白名单，点击 **【🚀 启动 AI 自动回复】** 即可！
-4. 可选：点击 **【👻 隐藏微信至离屏】**，微信将立刻无缝隐身，后台静默为您代答。
-
-### 方式二：源码运行与二次开发（开发者）
+### 源码运行与开发部署 (Run from Source)
 
 #### 1. 克隆仓库
 ```bash
