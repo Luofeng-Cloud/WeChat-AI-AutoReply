@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases/latest">
-    <img src="https://img.shields.io/badge/Release-v1.0.5-brightgreen?style=flat-square" alt="Release">
+    <img src="https://img.shields.io/badge/Release-v1.0.6-brightgreen?style=flat-square" alt="Release">
   </a>
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6?logo=windows&style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/WeChat-3.x%20%7C%204.x%20Qt-07C160?logo=wechat&style=flat-square" alt="WeChat">
