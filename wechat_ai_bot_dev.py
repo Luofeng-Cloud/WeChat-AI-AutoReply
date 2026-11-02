@@ -336,6 +336,36 @@ def activate_wechat(hwnd):
     except Exception:
         return False
 
+def restore_user_foreground(orig_hwnd, wx_hwnd):
+    """把前台焦点还给用户原窗口：先用原来的普通方式，失败了才用线程输入附加兜底。
+    不移动、不缩放任何窗口；还原失败时写一条日志，方便定位。"""
+    if not orig_hwnd or orig_hwnd == wx_hwnd:
+        return True
+    try:
+        if not user32.IsWindow(orig_hwnd):
+            return False
+        user32.SetForegroundWindow(orig_hwnd)          # ① 和原来完全一样的做法
+        if user32.GetForegroundWindow() == orig_hwnd:
+            return True
+        fg = user32.GetForegroundWindow()              # ② 被 Windows 拒绝时才兜底
+        fg_thread = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+        my_thread = kernel32.GetCurrentThreadId()
+        attached = False
+        try:
+            if fg_thread and fg_thread != my_thread:
+                attached = bool(user32.AttachThreadInput(my_thread, fg_thread, True))
+            user32.SetForegroundWindow(orig_hwnd)
+        finally:
+            if attached:
+                user32.AttachThreadInput(my_thread, fg_thread, False)
+        time.sleep(0.02)
+        ok = (user32.GetForegroundWindow() == orig_hwnd)
+        if not ok:
+            log("⚠️ [焦点还原失败] 未能把键盘焦点还给原窗口，请点一下你正在用的窗口再继续打字")
+        return ok
+    except Exception:
+        return False
+
 def post_click_client_point(hwnd, client_x, client_y):
     """
     通过 Win32 消息向微信窗口直接发送局部点击消息，
@@ -900,8 +930,7 @@ def send_reply_instant(hwnd, rect, layout, target, final_reply):
             time.sleep(0.04)
         finally:
             # 6. 平稳恢复用户原本的前台窗口 (坚决废除 HWND_BOTTOM 压底！)
-            if user_orig_hwnd and user_orig_hwnd != hwnd:
-                user32.SetForegroundWindow(user_orig_hwnd)
+            restore_user_foreground(user_orig_hwnd, hwnd)
                 
         # 7. 渲染沉降与严谨差分动态绿底增量闭环验收
         time.sleep(0.35) # 等待微信 Qt5 气泡动画与排版彻底沉降
@@ -1177,7 +1206,7 @@ def scan_and_reply_wechat(hwnd):
             cand_y, cand_target = valid_candidates[0]
             LAST_CLICKED_CANDIDATE_TIME[cand_target] = now_ts
             log(f"\n🔔 [当前已回完·极速切入] 发现白名单好友【{cand_target}】未读红点，正在锁定切入...")
-            activate_wechat(hwnd)
+            # 纯后台消息点击切换会话，不激活微信、不抢键盘焦点（离屏可用，与发送前纠偏同款点击）
             
             # 点击左侧联系人项目中心位置 (sidebar_w + 0.45*(chat_start_x - sidebar_w), cand_y)
             click_x = int(layout["sidebar_w"] + 0.45 * (layout["chat_start_x"] - layout["sidebar_w"]))
