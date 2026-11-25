@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases/latest">
-    <img src="https://img.shields.io/badge/Release-v1.0.6-brightgreen?style=flat-square" alt="Release">
+    <img src="https://img.shields.io/badge/Release-v1.1.0-brightgreen?style=flat-square" alt="Release">
   </a>
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6?logo=windows&style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/WeChat-3.x%20%7C%204.x%20Qt-07C160?logo=wechat&style=flat-square" alt="WeChat">
@@ -41,6 +41,9 @@
 
 - **🎭 千人千面个性化人设（Personas）**  
   支持针对不同好友定制专属语气模型：死党互怼、商务伙伴礼貌回应、老友温馨问候等，无缝贴合主人本人口吻。
+
+- **📚 本地个人知识库（Lightweight RAG）**  
+  支持在控制中心一键上传 `.txt` / `.md` / `.docx` / `.csv` / `.pdf` 文档或直接新建文本笔记。内置**双模式自适应检索**（小文档自动全量直通，大文档本地毫秒级 BM25 智能召回），上传即热生效，零额外向量 API 费用且严格保留真人日常口吻。
 
 - **🌐 主流大模型无缝兼容**  
   原生支持 OpenAI 标准协议，可接入 **DeepSeek (V3/R1)**、**MiniMax**、**Qwen (通义千问)**、**Moonshot (Kimi)**、**智谱 GLM**、**ChatGPT (GPT-4o)** 等主流 API。
@@ -123,12 +126,13 @@ python wechat_ai_bot_dev.py
 ```text
 WeChat-AI-AutoReply/
 ├── wechat_ai_bot_dev.py          # 后台常驻感知与调度核心 (OCR+Win32消息路由+离屏抓图)
-├── wechat_bot_gui_dev.py         # 现代化控制中心 GUI (Tkinter + 实时日志 + 托盘控制)
+├── wechat_bot_gui_dev.py         # 现代化控制中心 GUI (Tkinter + 实时日志 + 知识库管理 + 沙盒测试)
+├── knowledge_base.py             # 轻量级本地个人知识库引擎 (多格式解析 + 直通/BM25 双模式检索)
 ├── kill_wechat_bot_dev.py        # 安全进程清理终结脚本 (精准定向关闭守护)
 ├── wechat_config.example.json    # 工业级通用脱敏配置文件模板
 ├── .env.example                  # 环境变量配置模板
 ├── requirements.txt              # Python 依赖清单
-├── .gitignore                    # 工业级排除规则 (严防私密配置与日志外泄)
+├── .gitignore                    # 工业级排除规则 (严防私密配置、知识库与日志外泄)
 ├── LICENSE                       # MIT 开源许可证
 └── README.md                     # 项目说明文档
 ```

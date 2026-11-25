@@ -39,6 +39,7 @@ MANIFEST
 wechat_config_dev.json
 wechat_config.json
 wechat_convo_map.json
+knowledge_base/
 *.pid
 *.log
 *.tmp

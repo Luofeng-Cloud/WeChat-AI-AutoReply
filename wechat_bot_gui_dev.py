@@ -10,7 +10,12 @@ import requests
 import ctypes
 from ctypes import wintypes
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, filedialog
+
+try:
+    import knowledge_base as kb_engine
+except Exception:
+    kb_engine = None
 
 # Force UTF-8 stdout
 if hasattr(sys.stdout, 'reconfigure'):
@@ -200,7 +205,13 @@ class WeChatBotGUI(tk.Tk):
                 "按住说话",
                 "按Enter发送",
                 "发送(S)"
-            ]
+            ],
+            "knowledge_base": {
+                "enabled": True,
+                "direct_threshold": 3000,
+                "top_k": 3,
+                "max_context_chars": 1800
+            }
         }
         if os.path.exists(CONFIG_FILE):
             try:
@@ -212,6 +223,13 @@ class WeChatBotGUI(tk.Tk):
                     default["whitelist"] = [w for w in wl if isinstance(w, str)] if isinstance(wl, list) else []
                     bl = default.get("blacklist")
                     default["blacklist"] = [b for b in bl if isinstance(b, str)] if isinstance(bl, list) else []
+                    kb_c = default.get("knowledge_base")
+                    if not isinstance(kb_c, dict):
+                        default["knowledge_base"] = {"enabled": True, "direct_threshold": 3000, "top_k": 3, "max_context_chars": 1800}
+                    else:
+                        kb_merged = {"enabled": True, "direct_threshold": 3000, "top_k": 3, "max_context_chars": 1800}
+                        kb_merged.update(kb_c)
+                        default["knowledge_base"] = kb_merged
             except Exception as e:
                 print(f"Error loading config: {e}")
         return default
@@ -263,16 +281,19 @@ class WeChatBotGUI(tk.Tk):
         self.tab_engine = ttk.Frame(self.notebook, padding=12)
         self.tab_prompt = ttk.Frame(self.notebook, padding=12)
         self.tab_whitelist = ttk.Frame(self.notebook, padding=12)
+        self.tab_kb = ttk.Frame(self.notebook, padding=10)
         self.tab_test = ttk.Frame(self.notebook, padding=12)
 
         self.notebook.add(self.tab_engine, text=" ⚙️ AI 引擎设置 ")
         self.notebook.add(self.tab_prompt, text=" 🎭 人设与指令 Prompt ")
         self.notebook.add(self.tab_whitelist, text=" 🌓 白名单与防扰 ")
+        self.notebook.add(self.tab_kb, text=" 📚 个人知识库 ")
         self.notebook.add(self.tab_test, text=" 🧪 AI 仿真测试沙盒 ")
 
         self.build_tab_engine()
         self.build_tab_prompt()
         self.build_tab_whitelist()
+        self.build_tab_kb()
         self.build_tab_test()
 
         # Bottom Log Viewer
@@ -451,6 +472,297 @@ class WeChatBotGUI(tk.Tk):
         self.txt_test_out = scrolledtext.ScrolledText(self.tab_test, wrap=tk.WORD, height=10, font=("微软雅黑", 9))
         self.txt_test_out.pack(fill=tk.BOTH, expand=True, pady=4)
 
+    # 5. TAB: Personal Knowledge Base
+    def build_tab_kb(self):
+        top_kb = ttk.Frame(self.tab_kb)
+        top_kb.pack(fill=tk.X, pady=(0, 6))
+
+        self.var_kb_enabled = tk.BooleanVar(value=True)
+        self.chk_kb_enabled = ttk.Checkbutton(
+            top_kb,
+            text="📚 启用个人知识库辅助回复（≤3000字自动全量挂载，大文档本地 BM25 智能召回，上传后自动热生效）",
+            variable=self.var_kb_enabled,
+            command=lambda: self.save_ui_to_config(show_msg=False)
+        )
+        self.chk_kb_enabled.pack(side=tk.LEFT)
+
+        self.lbl_kb_stats = ttk.Label(top_kb, text="状态: 加载中...", foreground="#107c41", font=("微软雅黑", 8, "bold"))
+        self.lbl_kb_stats.pack(side=tk.RIGHT)
+
+        # Toolbar
+        bar_kb = ttk.Frame(self.tab_kb)
+        bar_kb.pack(fill=tk.X, pady=(0, 6))
+
+        ttk.Button(bar_kb, text="📂 上传知识库文件", command=self.kb_upload_files).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(bar_kb, text="📝 新建纯文本笔记", command=self.kb_new_note_dialog).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bar_kb, text="🔄 启用/停用选中", command=self.kb_toggle_selected).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bar_kb, text="👁️ 预览内容", command=self.kb_preview_selected).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bar_kb, text="🗑️ 删除选中", command=self.kb_delete_selected).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bar_kb, text="📁 打开目录", command=self.kb_open_folder).pack(side=tk.RIGHT)
+
+        pdf_hint = "支持: .txt / .md / .docx / .csv / .pdf"
+        if kb_engine is not None and not kb_engine.is_pdf_supported():
+            pdf_hint = "支持: .txt / .md / .docx / .csv（安装 pypdf 后支持 .pdf）"
+        ttk.Label(bar_kb, text=pdf_hint, foreground="#666666", font=("微软雅黑", 8)).pack(side=tk.RIGHT, padx=(0, 10))
+
+        # Document List Treeview
+        tree_frame = ttk.Frame(self.tab_kb)
+        tree_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
+
+        cols = ("status", "name", "ext", "chars", "chunks", "added_at")
+        self.tree_kb = ttk.Treeview(tree_frame, columns=cols, show="headings", height=6, selectmode="browse")
+        self.tree_kb.heading("status", text="状态")
+        self.tree_kb.heading("name", text="文档名称")
+        self.tree_kb.heading("ext", text="格式")
+        self.tree_kb.heading("chars", text="字数")
+        self.tree_kb.heading("chunks", text="切片数")
+        self.tree_kb.heading("added_at", text="导入时间")
+
+        self.tree_kb.column("status", width=70, anchor=tk.CENTER, stretch=False)
+        self.tree_kb.column("name", width=330, anchor=tk.W)
+        self.tree_kb.column("ext", width=65, anchor=tk.CENTER, stretch=False)
+        self.tree_kb.column("chars", width=80, anchor=tk.E, stretch=False)
+        self.tree_kb.column("chunks", width=70, anchor=tk.E, stretch=False)
+        self.tree_kb.column("added_at", width=145, anchor=tk.CENTER, stretch=False)
+
+        sb_kb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree_kb.yview)
+        self.tree_kb.configure(yscrollcommand=sb_kb.set)
+        self.tree_kb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb_kb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree_kb.bind("<Double-1>", lambda e: self.kb_toggle_selected())
+
+        # Bottom Params + Quick Search Test
+        bot_kb = ttk.Frame(self.tab_kb)
+        bot_kb.pack(fill=tk.X, pady=(2, 2))
+
+        ttk.Label(bot_kb, text="🔍 检索测试:").pack(side=tk.LEFT, padx=(0, 4))
+        self.ent_kb_query = ttk.Entry(bot_kb)
+        self.ent_kb_query.insert(0, "输入测试问题，验证知识库能否命中")
+        self.ent_kb_query.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        ttk.Button(bot_kb, text="测试命中", command=self.kb_run_search_test).pack(side=tk.LEFT, padx=(0, 12))
+
+        ttk.Label(bot_kb, text="Top-K:").pack(side=tk.LEFT, padx=(0, 3))
+        self.spin_kb_topk = ttk.Spinbox(bot_kb, from_=1, to=8, increment=1, width=4)
+        self.spin_kb_topk.pack(side=tk.LEFT, padx=(0, 8))
+
+        ttk.Label(bot_kb, text="注入上限(字):").pack(side=tk.LEFT, padx=(0, 3))
+        self.spin_kb_maxchars = ttk.Spinbox(bot_kb, from_=500, to=6000, increment=200, width=6)
+        self.spin_kb_maxchars.pack(side=tk.LEFT, padx=(0, 8))
+
+        ttk.Button(bot_kb, text="💾 保存参数", command=self.save_ui_to_config).pack(side=tk.RIGHT)
+
+        self.txt_kb_test_out = scrolledtext.ScrolledText(self.tab_kb, wrap=tk.WORD, height=3, font=("微软雅黑", 8), bg="#f8f9fa")
+        self.txt_kb_test_out.pack(fill=tk.X, pady=(4, 0))
+        self.txt_kb_test_out.insert(tk.END, "💡 提示：双击上方文档可快速切换「启用/停用」；也可在【🧪 AI 仿真测试沙盒】直接测试结合知识库后的真实回复效果。")
+        self.txt_kb_test_out.configure(state=tk.DISABLED)
+
+    def refresh_kb_list(self):
+        if not hasattr(self, "tree_kb"):
+            return
+        for item in self.tree_kb.get_children():
+            self.tree_kb.delete(item)
+        if kb_engine is None:
+            self.lbl_kb_stats.configure(text="⚠️ 未找到 knowledge_base.py 模块", foreground="#c0392b")
+            return
+        mgr = kb_engine.get_manager()
+        docs = mgr.list_documents()
+        for d in docs:
+            st = "✅ 启用" if d["enabled"] else "⬜ 停用"
+            self.tree_kb.insert(
+                "", tk.END, iid=d["id"],
+                values=(st, d["name"], d["ext"], d["char_count"], d["chunk_count"], d["added_at"])
+            )
+        kb_cfg = self.config_data.get("knowledge_base") or {}
+        stats = mgr.get_stats(direct_threshold=kb_cfg.get("direct_threshold", 3000))
+        mode_map = {
+            "empty": "空库(未生效)",
+            "direct": "小文档直通全量",
+            "bm25": "大文档BM25智能检索"
+        }
+        mode_txt = mode_map.get(stats["mode"], stats["mode"])
+        self.lbl_kb_stats.configure(
+            text=f"已启用: {stats['enabled_docs']}/{stats['total_docs']} 份 | {stats['enabled_chars']} 字 | 模式: {mode_txt}",
+            foreground="#107c41" if stats["enabled_docs"] > 0 else "#666666"
+        )
+
+    def kb_upload_files(self):
+        if kb_engine is None:
+            messagebox.showerror("错误", "知识库核心模块 knowledge_base.py 未加载！")
+            return
+        paths = filedialog.askopenfilenames(
+            title="选择要上传的知识库文件（支持多选）",
+            filetypes=[
+                ("所有支持格式", "*.txt *.md *.docx *.csv *.pdf"),
+                ("文本 / Markdown", "*.txt *.md"),
+                ("Word 文档", "*.docx"),
+                ("CSV 表格", "*.csv"),
+                ("PDF 文档", "*.pdf"),
+                ("所有文件", "*.*"),
+            ]
+        )
+        if not paths:
+            return
+        mgr = kb_engine.get_manager()
+        ok_list = []
+        fail_list = []
+        for p in paths:
+            try:
+                doc = mgr.add_file(p)
+                ok_list.append(f"{doc['name']} ({doc['char_count']} 字 / {doc['chunk_count']} 段)")
+            except Exception as e:
+                fail_list.append(f"{os.path.basename(p)}: {e}")
+
+        self.refresh_kb_list()
+        if ok_list and not fail_list:
+            messagebox.showinfo("导入成功", f"🎉 成功导入 {len(ok_list)} 份知识库文件（已自动热生效）：\n\n" + "\n".join(ok_list))
+        elif ok_list and fail_list:
+            messagebox.showwarning(
+                "部分导入成功",
+                f"✅ 成功 ({len(ok_list)}):\n" + "\n".join(ok_list) +
+                f"\n\n❌ 失败 ({len(fail_list)}):\n" + "\n".join(fail_list)
+            )
+        else:
+            messagebox.showerror("导入失败", "\n".join(fail_list))
+
+    def kb_new_note_dialog(self):
+        if kb_engine is None:
+            messagebox.showerror("错误", "知识库核心模块 knowledge_base.py 未加载！")
+            return
+        win = tk.Toplevel(self)
+        win.title("📝 新建纯文本知识笔记")
+        win.geometry("560x420")
+        win.transient(self)
+        win.grab_set()
+
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        row_t = ttk.Frame(frm)
+        row_t.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(row_t, text="笔记标题:", font=("微软雅黑", 9, "bold")).pack(side=tk.LEFT, padx=(0, 6))
+        ent_title = ttk.Entry(row_t)
+        ent_title.insert(0, "个人常用资料与问答")
+        ent_title.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        ttk.Label(frm, text="知识内容（可直接粘贴个人日程、商品报价、常见问题 FAQ 等）:", font=("微软雅黑", 8)).pack(anchor=tk.W, pady=(0, 4))
+        txt_body = scrolledtext.ScrolledText(frm, wrap=tk.WORD, font=("微软雅黑", 9))
+        txt_body.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        def _save_note():
+            title = ent_title.get().strip()
+            body = txt_body.get("1.0", tk.END).strip()
+            if not body:
+                messagebox.showwarning("提示", "请输入笔记内容！", parent=win)
+                return
+            try:
+                doc = kb_engine.get_manager().add_text_note(title, body)
+                self.refresh_kb_list()
+                win.destroy()
+                messagebox.showinfo("保存成功", f"✅ 已保存笔记【{doc['name']}】({doc['char_count']} 字)，AI 回复已自动生效！")
+            except Exception as e:
+                messagebox.showerror("保存失败", str(e), parent=win)
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill=tk.X)
+        ttk.Button(btns, text="取消", command=win.destroy).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(btns, text="💾 保存并入库", command=_save_note).pack(side=tk.RIGHT)
+
+    def kb_toggle_selected(self):
+        if kb_engine is None:
+            return
+        sel = self.tree_kb.selection()
+        if not sel:
+            messagebox.showinfo("提示", "请先在列表中选中一份文档。")
+            return
+        doc_id = sel[0]
+        kb_engine.get_manager().toggle_document(doc_id)
+        self.refresh_kb_list()
+        if self.tree_kb.exists(doc_id):
+            self.tree_kb.selection_set(doc_id)
+
+    def kb_preview_selected(self):
+        if kb_engine is None:
+            return
+        sel = self.tree_kb.selection()
+        if not sel:
+            messagebox.showinfo("提示", "请先选中要预览的文档。")
+            return
+        doc = kb_engine.get_manager().get_document(sel[0])
+        if not doc:
+            return
+        win = tk.Toplevel(self)
+        win.title(f"👁️ 文档切片预览 - {doc['name']}")
+        win.geometry("640x460")
+        win.transient(self)
+
+        info = f"文档：{doc['name']} | 状态：{'启用' if doc.get('enabled', True) else '停用'} | 总字数：{doc.get('char_count', 0)} | 切片数：{len(doc.get('chunks', []))}"
+        ttk.Label(win, text=info, padding=(12, 8), font=("微软雅黑", 9, "bold")).pack(anchor=tk.W)
+        txt = scrolledtext.ScrolledText(win, wrap=tk.WORD, font=("微软雅黑", 9))
+        txt.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
+        for ch in doc.get("chunks", []):
+            txt.insert(tk.END, f"--- [切片 #{ch.get('idx', 0) + 1} | {ch.get('char_count', 0)} 字] ---\n{ch.get('text', '')}\n\n")
+        txt.configure(state=tk.DISABLED)
+
+    def kb_delete_selected(self):
+        if kb_engine is None:
+            return
+        sel = self.tree_kb.selection()
+        if not sel:
+            messagebox.showinfo("提示", "请先选中要删除的文档。")
+            return
+        doc_id = sel[0]
+        vals = self.tree_kb.item(doc_id, "values")
+        doc_name = vals[1] if len(vals) > 1 else doc_id
+        if not messagebox.askyesno("确认删除", f"确定要从知识库中删除【{doc_name}】吗？\n（不会影响您电脑原位置的源文件）"):
+            return
+        kb_engine.get_manager().delete_document(doc_id)
+        self.refresh_kb_list()
+
+    def kb_open_folder(self):
+        if kb_engine is None:
+            return
+        kb_dir = kb_engine.get_manager().kb_dir
+        os.makedirs(kb_dir, exist_ok=True)
+        try:
+            os.startfile(kb_dir)
+        except Exception as e:
+            messagebox.showerror("错误", f"打开目录失败: {e}")
+
+    def kb_run_search_test(self):
+        if kb_engine is None:
+            return
+        q = self.ent_kb_query.get().strip()
+        if not q:
+            messagebox.showwarning("提示", "请输入测试问题！")
+            return
+        self.save_ui_to_config(show_msg=False)
+        kb_cfg = self.config_data.get("knowledge_base") or {}
+        res = kb_engine.retrieve_for_query(q, kb_cfg)
+
+        mode = res.get("mode", "")
+        ms = res.get("elapsed_ms", 0)
+        hits = res.get("hits", [])
+        if mode == "disabled":
+            out = "⚠️ 个人知识库总开关当前处于关闭状态。"
+        elif mode == "empty":
+            out = "📭 当前没有已启用的知识库文档，请先上传文件或新建笔记。"
+        elif mode == "direct":
+            names = ", ".join(h["doc_name"] for h in hits)
+            out = f"✅ [小文档直通模式 | {ms}ms] 已全量挂载 {len(hits)} 份文档（{res.get('total_enabled_chars', 0)} 字）：{names}"
+        elif mode == "no_match":
+            out = f"ℹ️ [BM25 智能检索 | {ms}ms] 未匹配到相关片段（AI 将自动忽略知识库，按日常语气正常聊天）。"
+        else:
+            lines = [f"✅ [BM25 智能检索 | {ms}ms] 命中 {len(hits)} 段参考资料："]
+            for i, h in enumerate(hits, 1):
+                snippet = h["text"].replace("\n", " ")[:95]
+                lines.append(f"  {i}. 《{h['doc_name']}》(分值 {h['score']})：{snippet}...")
+            out = "\n".join(lines)
+
+        self.txt_kb_test_out.configure(state=tk.NORMAL)
+        self.txt_kb_test_out.delete("1.0", tk.END)
+        self.txt_kb_test_out.insert(tk.END, out)
+        self.txt_kb_test_out.configure(state=tk.DISABLED)
+
     # Load / Save Logic
     def load_settings_to_ui(self):
         c = self.config_data
@@ -502,6 +814,12 @@ class WeChatBotGUI(tk.Tk):
         for b in c.get("blacklist", []):
             self.listbox_bl.insert(tk.END, b)
 
+        kb_c = c.get("knowledge_base") or {}
+        self.var_kb_enabled.set(bool(kb_c.get("enabled", True)))
+        self.spin_kb_topk.set(int(kb_c.get("top_k", 3)))
+        self.spin_kb_maxchars.set(int(kb_c.get("max_context_chars", 1800)))
+        self.refresh_kb_list()
+
     def save_ui_to_config(self, show_msg=True):
         self.config_data["ai_engine"] = self.var_engine.get()
         self.config_data["openai_api"] = {
@@ -528,7 +846,24 @@ class WeChatBotGUI(tk.Tk):
         self.config_data["whitelist"] = list(self.listbox_wl.get(0, tk.END))
         self.config_data["blacklist"] = list(self.listbox_bl.get(0, tk.END))
 
+        old_kb = self.config_data.get("knowledge_base") if isinstance(self.config_data.get("knowledge_base"), dict) else {}
+        try:
+            kb_topk = max(1, min(8, int(float(self.spin_kb_topk.get()))))
+        except Exception:
+            kb_topk = 3
+        try:
+            kb_maxchars = max(500, min(6000, int(float(self.spin_kb_maxchars.get()))))
+        except Exception:
+            kb_maxchars = 1800
+        self.config_data["knowledge_base"] = {
+            "enabled": bool(self.var_kb_enabled.get()),
+            "direct_threshold": int(old_kb.get("direct_threshold", 3000)),
+            "top_k": kb_topk,
+            "max_context_chars": kb_maxchars
+        }
+
         if self.save_config():
+            self.refresh_kb_list()
             if show_msg:
                 messagebox.showinfo("保存成功", "✅ 配置已成功保存！后台 AI 守护进程将自动应用最新设置。")
 
@@ -608,56 +943,92 @@ class WeChatBotGUI(tk.Tk):
             return
 
         self.save_ui_to_config(show_msg=False)
-        self.txt_test_out.delete("1.0", tk.END)
-        self.txt_test_out.insert(tk.END, "🤖 正在调用大模型生成回复...\n")
-        self.update()
-
-        t0 = time.time()
         oa = self.config_data.get("openai_api") or {}
         api_key = (oa.get("api_key") or "").strip()
-        api_base = (oa.get("api_base") or "https://api.xiaomimimo.com/v1").rstrip("/")
+        api_base = (oa.get("api_base") or "https://api.xiaomimimo.com/v1").strip().rstrip("/")
         model = oa.get("model") or "mimo-v2.6-flash"
-        
+
         if not api_key:
             self.txt_test_out.delete("1.0", tk.END)
             self.txt_test_out.insert(tk.END, "❌ 请先在【AI 引擎设置】中填入有效的 API Key！")
             return
-            
+
+        self.btn_run_test.configure(state=tk.DISABLED, text="⏳ 正在生成中...")
+        self.txt_test_out.delete("1.0", tk.END)
+        self.txt_test_out.insert(tk.END, "🤖 正在后台调用大模型生成回复，界面保持响应...\n")
+
+        base_prompt = self.config_data.get("system_prompt") or DEFAULT_PROMPTS.get("🌟 真人日常 (默认)", "")
+        kb_cfg = dict(self.config_data.get("knowledge_base") or {})
         url = api_base if api_base.endswith("/chat/completions") else f"{api_base}/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        base_prompt = self.config_data.get("system_prompt") or DEFAULT_PROMPTS.get("🌟 真人日常 (默认)", "")
-        now_time = time.strftime("%H:%M")
-        prompt = (
-            f"{base_prompt}\n"
-            f"【当前互动好友】：好友【{sender}】，当前时间{now_time}。\n"
-            f"【对话规则】：直接输出发给对方的一句中文，口语化自然、简练得体。严禁括号描写心理活动，严禁透露AI身份。"
-        )
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": msg}
-            ],
-            "temperature": 0.7
-        }
-        try:
-            res = requests.post(url, headers=headers, json=payload, timeout=12)
-            if res.status_code == 200:
-                data = res.json()
-                raw_reply = data["choices"][0]["message"]["content"]
-                reply = re.sub(r'<think>.*?</think>', '', raw_reply, flags=re.DOTALL)
-                reply = re.sub(r'^[（(][^）)]*[）)]\s*', '', reply)
-                reply = re.sub(r'\s*[（(][^）)]*[）)]$', '', reply)
-                reply = reply.strip().strip('"').strip('“').strip('”')
-                dur = round(time.time() - t0, 2)
-                self.txt_test_out.delete("1.0", tk.END)
-                self.txt_test_out.insert(tk.END, f"{reply}\n\n[⏱️ 耗时: {dur} 秒]")
-            else:
-                self.txt_test_out.delete("1.0", tk.END)
-                self.txt_test_out.insert(tk.END, f"❌ API 请求失败 (状态码 {res.status_code}):\n{res.text}")
-        except Exception as e:
-            self.txt_test_out.delete("1.0", tk.END)
-            self.txt_test_out.insert(tk.END, f"❌ 请求大模型出错: {e}")
+
+        def _worker():
+            t0 = time.time()
+            now_time = time.strftime("%H:%M")
+            prompt = (
+                f"{base_prompt}\n"
+                f"【当前互动好友】：好友【{sender}】，当前时间{now_time}。\n"
+                f"【对话规则】：直接输出发给对方的一句中文，口语化自然、简练得体。严禁括号描写心理活动，严禁透露AI身份。"
+            )
+            kb_status_line = "未启用"
+            if kb_engine is not None and kb_cfg.get("enabled", True):
+                try:
+                    kb_res = kb_engine.retrieve_for_query(msg, kb_cfg)
+                    kb_block = kb_engine.build_kb_prompt_block(kb_res)
+                    if kb_block:
+                        prompt += kb_block
+                        if kb_res.get("mode") == "direct":
+                            kb_status_line = f"直通全量挂载 ({kb_res.get('total_enabled_docs', 0)} 份 / {kb_res.get('total_enabled_chars', 0)} 字)"
+                        else:
+                            hit_names = list(dict.fromkeys(h.get("doc_name", "") for h in kb_res.get("hits", [])))
+                            kb_status_line = f"BM25 命中 {len(kb_res.get('hits', []))} 段 ({', '.join(hit_names[:3])})"
+                    elif kb_res.get("mode") == "empty":
+                        kb_status_line = "已开启（暂未上传启用文档）"
+                    else:
+                        kb_status_line = "已开启（未命中相关片段，按日常对话回复）"
+                except Exception as e:
+                    kb_status_line = f"检索异常已降级 ({e})"
+
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": msg}
+                ],
+                "temperature": 0.7
+            }
+            try:
+                res = requests.post(url, headers=headers, json=payload, timeout=12)
+                if res.status_code == 200:
+                    data = res.json()
+                    raw_reply = data["choices"][0]["message"]["content"]
+                    reply = re.sub(r'<think>.*?</think>', '', raw_reply, flags=re.DOTALL)
+                    reply = re.sub(r'^[（(][^）)]*[）)]\s*', '', reply)
+                    reply = re.sub(r'\s*[（(][^）)]*[）)]$', '', reply)
+                    reply = reply.strip().strip('"').strip('“').strip('”')
+                    dur = round(time.time() - t0, 2)
+                    result_text = f"{reply}\n\n[📚 知识库: {kb_status_line}]\n[⏱️ 耗时: {dur} 秒]"
+                else:
+                    result_text = f"❌ API 请求失败 (状态码 {res.status_code}):\n{res.text}"
+            except Exception as e:
+                result_text = f"❌ 请求大模型出错: {e}"
+
+            def _finish():
+                if not self.is_monitoring:
+                    return
+                try:
+                    self.txt_test_out.delete("1.0", tk.END)
+                    self.txt_test_out.insert(tk.END, result_text)
+                    self.btn_run_test.configure(state=tk.NORMAL, text="🚀 触发 AI 拟真回复测试")
+                except Exception:
+                    pass
+
+            try:
+                self.after(0, _finish)
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def is_target_bot_process(self, proc):
         try:

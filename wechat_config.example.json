@@ -44,5 +44,11 @@
         100,
         1100,
         750
-    ]
+    ],
+    "knowledge_base": {
+        "enabled": true,
+        "direct_threshold": 3000,
+        "top_k": 3,
+        "max_context_chars": 1800
+    }
 }

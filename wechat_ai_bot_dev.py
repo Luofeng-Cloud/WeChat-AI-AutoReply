@@ -12,6 +12,11 @@ import requests
 import pyperclip
 from rapidocr_onnxruntime import RapidOCR
 
+try:
+    import knowledge_base as kb_engine
+except Exception:
+    kb_engine = None
+
 # =============================================================================
 # 0. WIN32 API DEFINITIONS & DESKTOP BINDING
 # =============================================================================
@@ -668,6 +673,27 @@ def generate_ai_reply(sender, message_content):
             f"【对话规则】：直接输出发给对方的一句中文，口语化自然、简练得体。严禁括号描写心理活动，严禁透露AI身份。"
         )
     
+    # 个人知识库检索增强（热加载、全程异常兜底，不影响原有稳定回复链路）
+    if kb_engine is not None:
+        kb_cfg = cfg.get("knowledge_base")
+        if not isinstance(kb_cfg, dict):
+            kb_cfg = {"enabled": True}
+        if kb_cfg.get("enabled", True):
+            try:
+                kb_res = kb_engine.retrieve_for_query(message_content, kb_cfg)
+                kb_block = kb_engine.build_kb_prompt_block(kb_res)
+                if kb_block:
+                    system_prompt += kb_block
+                    mode = kb_res.get("mode", "")
+                    ms = kb_res.get("elapsed_ms", 0)
+                    if mode == "direct":
+                        log(f"📚 [知识库直通] 全量挂载 {kb_res.get('total_enabled_docs', 0)} 份文档 ({kb_res.get('total_enabled_chars', 0)} 字, {ms}ms)")
+                    else:
+                        hit_names = list(dict.fromkeys(h.get("doc_name", "") for h in kb_res.get("hits", [])))
+                        log(f"📚 [知识库命中] BM25 召回 {len(kb_res.get('hits', []))} 段 ({', '.join(hit_names[:3])}, {ms}ms)")
+            except Exception as e:
+                log(f"⚠️ [知识库检索异常，已降级为常规回复] {e}")
+
     oa = cfg.get("openai_api") or {}
     api_base = str(cfg.get("api_url") or oa.get("api_base") or "https://api.xiaomimimo.com/v1").strip().rstrip("/")
     url = api_base if api_base.endswith("/chat/completions") else f"{api_base}/chat/completions"
