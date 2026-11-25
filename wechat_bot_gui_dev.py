@@ -17,6 +17,11 @@ try:
 except Exception:
     kb_engine = None
 
+try:
+    import media_vision as mv_engine
+except Exception:
+    mv_engine = None
+
 # Force UTF-8 stdout
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -211,7 +216,9 @@ class WeChatBotGUI(tk.Tk):
                 "direct_threshold": 3000,
                 "top_k": 3,
                 "max_context_chars": 1800
-            }
+            },
+            "enable_image_vision": True,
+            "enable_voice_to_text": False
         }
         if os.path.exists(CONFIG_FILE):
             try:
@@ -370,6 +377,24 @@ class WeChatBotGUI(tk.Tk):
         self.spin_delay.pack(side=tk.LEFT, padx=(0, 6))
         ttk.Label(row_p2, text="秒 (模拟真实打字思考时间，防高频回复)").pack(side=tk.LEFT)
 
+        row_p3 = ttk.Frame(grp_params)
+        row_p3.pack(fill=tk.X, pady=4)
+        self.var_img_vision = tk.BooleanVar(value=True)
+        self.chk_img_vision = ttk.Checkbutton(
+            row_p3,
+            text="🖼️ 启用好友图片识别（自动裁图上传多模态模型，支持照片/表情包）",
+            variable=self.var_img_vision
+        )
+        self.chk_img_vision.pack(side=tk.LEFT, padx=(0, 18))
+
+        self.var_voice_text = tk.BooleanVar(value=False)
+        self.chk_voice_text = ttk.Checkbutton(
+            row_p3,
+            text="🎙️ 启用好友语音自动转文字（安全触发微信「转文字」后识别回复）",
+            variable=self.var_voice_text
+        )
+        self.chk_voice_text.pack(side=tk.LEFT)
+
         # Save Button
         btn_save_frame = ttk.Frame(self.tab_engine)
         btn_save_frame.pack(fill=tk.X, pady=10)
@@ -468,9 +493,31 @@ class WeChatBotGUI(tk.Tk):
         self.btn_run_test = ttk.Button(in_frame, text="🚀 触发 AI 拟真回复测试", command=self.run_sandbox_test)
         self.btn_run_test.pack(side=tk.RIGHT)
 
-        ttk.Label(self.tab_test, text="AI 回复输出 (与微信聊天完全一致):", font=("微软雅黑", 8)).pack(anchor=tk.W, pady=(8, 2))
+        # 多模态测试图片附件行
+        self.sandbox_img_path = ""
+        img_frame = ttk.Frame(self.tab_test)
+        img_frame.pack(fill=tk.X, pady=(2, 4))
+        ttk.Button(img_frame, text="🖼️ 附带测试图片 (可选)", command=self.pick_sandbox_image).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(img_frame, text="清除图片", command=self.clear_sandbox_image).pack(side=tk.LEFT, padx=(0, 10))
+        self.lbl_test_img = ttk.Label(img_frame, text="未附带图片（选择本地图片可测试视觉模型看图回复）", foreground="#666666", font=("微软雅黑", 8))
+        self.lbl_test_img.pack(side=tk.LEFT)
+
+        ttk.Label(self.tab_test, text="AI 回复输出 (与微信聊天完全一致):", font=("微软雅黑", 8)).pack(anchor=tk.W, pady=(6, 2))
         self.txt_test_out = scrolledtext.ScrolledText(self.tab_test, wrap=tk.WORD, height=10, font=("微软雅黑", 9))
         self.txt_test_out.pack(fill=tk.BOTH, expand=True, pady=4)
+
+    def pick_sandbox_image(self):
+        p = filedialog.askopenfilename(
+            title="选择测试图片（用于验证多模态看图回复）",
+            filetypes=[("图片文件", "*.jpg *.jpeg *.png *.webp *.bmp *.gif"), ("所有文件", "*.*")]
+        )
+        if p:
+            self.sandbox_img_path = p
+            self.lbl_test_img.configure(text=f"✅ 已附带: {os.path.basename(p)}", foreground="#107c41")
+
+    def clear_sandbox_image(self):
+        self.sandbox_img_path = ""
+        self.lbl_test_img.configure(text="未附带图片（选择本地图片可测试视觉模型看图回复）", foreground="#666666")
 
     # 5. TAB: Personal Knowledge Base
     def build_tab_kb(self):
@@ -778,6 +825,8 @@ class WeChatBotGUI(tk.Tk):
         self.ent_prefix.delete(0, tk.END)
         self.ent_prefix.insert(0, c.get("reply_prefix") or "[AI自动回复] ")
         self.spin_delay.set(c.get("reply_delay_seconds") or 0.0)
+        self.var_img_vision.set(bool(c.get("enable_image_vision", True)))
+        self.var_voice_text.set(bool(c.get("enable_voice_to_text", False)))
 
         sys_prompt = (c.get("system_prompt") or DEFAULT_PROMPTS["🌟 真人日常 (默认)"]).strip()
         self.txt_prompt.delete("1.0", tk.END)
@@ -834,6 +883,8 @@ class WeChatBotGUI(tk.Tk):
             self.config_data["reply_delay_seconds"] = float(self.spin_delay.get())
         except Exception:
             self.config_data["reply_delay_seconds"] = 0.0
+        self.config_data["enable_image_vision"] = bool(self.var_img_vision.get())
+        self.config_data["enable_voice_to_text"] = bool(self.var_voice_text.get())
 
         cur_prompt = self.txt_prompt.get("1.0", tk.END).strip()
         cur_preset = self.cbo_presets.get()
@@ -938,8 +989,9 @@ class WeChatBotGUI(tk.Tk):
     def run_sandbox_test(self):
         sender = self.ent_test_sender.get().strip() or "测试好友"
         msg = self.ent_test_msg.get().strip()
-        if not msg:
-            messagebox.showwarning("提示", "请输入发送内容！")
+        img_path = getattr(self, "sandbox_img_path", "") or ""
+        if not msg and not img_path:
+            messagebox.showwarning("提示", "请输入发送内容，或先附带一张测试图片！")
             return
 
         self.save_ui_to_config(show_msg=False)
@@ -989,16 +1041,28 @@ class WeChatBotGUI(tk.Tk):
                 except Exception as e:
                     kb_status_line = f"检索异常已降级 ({e})"
 
+            user_content = msg
+            img_status_line = ""
+            req_timeout = 12
+            if img_path and mv_engine is not None:
+                try:
+                    data_url, _ = mv_engine.encode_image_file_to_data_url(img_path)
+                    user_content = mv_engine.build_multimodal_user_content(msg, [{"data_url": data_url}])
+                    img_status_line = f"\n[🖼️ 附带图片: {os.path.basename(img_path)}]"
+                    req_timeout = 25
+                except Exception as e:
+                    img_status_line = f"\n[⚠️ 图片编码失败: {e}]"
+
             payload = {
                 "model": model,
                 "messages": [
                     {"role": "system", "content": prompt},
-                    {"role": "user", "content": msg}
+                    {"role": "user", "content": user_content}
                 ],
                 "temperature": 0.7
             }
             try:
-                res = requests.post(url, headers=headers, json=payload, timeout=12)
+                res = requests.post(url, headers=headers, json=payload, timeout=req_timeout)
                 if res.status_code == 200:
                     data = res.json()
                     raw_reply = data["choices"][0]["message"]["content"]
@@ -1007,7 +1071,7 @@ class WeChatBotGUI(tk.Tk):
                     reply = re.sub(r'\s*[（(][^）)]*[）)]$', '', reply)
                     reply = reply.strip().strip('"').strip('“').strip('”')
                     dur = round(time.time() - t0, 2)
-                    result_text = f"{reply}\n\n[📚 知识库: {kb_status_line}]\n[⏱️ 耗时: {dur} 秒]"
+                    result_text = f"{reply}\n\n[📚 知识库: {kb_status_line}]{img_status_line}\n[⏱️ 耗时: {dur} 秒]"
                 else:
                     result_text = f"❌ API 请求失败 (状态码 {res.status_code}):\n{res.text}"
             except Exception as e:

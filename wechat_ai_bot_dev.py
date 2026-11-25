@@ -17,6 +17,11 @@ try:
 except Exception:
     kb_engine = None
 
+try:
+    import media_vision as mv_engine
+except Exception:
+    mv_engine = None
+
 # =============================================================================
 # 0. WIN32 API DEFINITIONS & DESKTOP BINDING
 # =============================================================================
@@ -107,6 +112,7 @@ LAST_PROCESSED_SIGNATURE = {}
 API_CONVERSATION_HISTORY = {}
 LAST_CLICKED_CANDIDATE_TIME = {}
 SEND_FAIL_RETRY = {}
+VOICE_CONVERTED_CACHE = {}
 LAST_CHAT_HASH = None
 LAST_SIDEBAR_HASH = None
 LAST_FULL_SCAN_TIME = 0
@@ -528,7 +534,7 @@ BUILTIN_IGNORED_KEYWORDS = [
     "按住鼠标", "语音输入文字", "按住说话", "按Enter发送", "按Ctrl+Enter发送", "发送(S)"
 ]
 
-def parse_chat_bubbles_chromatic(res, img_rgb, layout, ignored_keywords=None):
+def parse_chat_bubbles_chromatic(res, img_rgb, layout, ignored_keywords=None, skip_voice_duration=False):
     arr = np.array(img_rgb)
     W, H = img_rgb.size
     chat_start_x = layout["chat_start_x"]
@@ -567,6 +573,8 @@ def parse_chat_bubbles_chromatic(res, img_rgb, layout, ignored_keywords=None):
             if any(c_clean.startswith(p) for p in ["[转账]", "微信转账", "已收款", "已被接收", "￥", "你撤回了一条消息"]):
                 continue
             if "拍了拍" in c_clean:
+                continue
+            if skip_voice_duration and mv_engine is not None and mv_engine.is_voice_duration_text(c_clean)[0]:
                 continue
                 
             # 采样气泡底色 (外扩采样)
@@ -644,7 +652,7 @@ def clean_ai_reply(reply):
         reply = reply[1:-1].strip()
     return reply
 
-def generate_ai_reply(sender, message_content):
+def generate_ai_reply(sender, message_content, images=None):
     cfg = load_config()
     now_time = time.strftime("%H:%M")
     
@@ -709,19 +717,42 @@ def generate_ai_reply(sender, message_content):
     history = API_CONVERSATION_HISTORY.get(sender, [])
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(history[-8:])
-    messages.append({"role": "user", "content": message_content})
+
+    has_images = bool(images and mv_engine is not None)
+    if has_images:
+        user_content = mv_engine.build_multimodal_user_content(message_content, images)
+        history_user_summary = f"[发来{len(images)}张图片] {message_content}".strip() if message_content else f"[发来{len(images)}张图片]"
+    else:
+        user_content = message_content
+        history_user_summary = message_content
+
+    messages.append({"role": "user", "content": user_content})
     
     payload = {"model": model, "messages": messages, "temperature": temperature}
+    req_timeout = 25 if has_images else 12
     try:
-        log(f"🤖 正在调用大模型 ({model}) 回复【{sender}】...")
-        res = requests.post(url, headers=headers, json=payload, timeout=12)
+        img_tag = f" (含 {len(images)} 张图片)" if has_images else ""
+        log(f"🤖 正在调用大模型 ({model}) 回复【{sender}】{img_tag}...")
+        res = requests.post(url, headers=headers, json=payload, timeout=req_timeout)
         if res.status_code == 200:
             reply = res.json()["choices"][0]["message"]["content"]
             cleaned = clean_ai_reply(reply)
-            history.append({"role": "user", "content": message_content})
+            history.append({"role": "user", "content": history_user_summary})
             history.append({"role": "assistant", "content": cleaned})
             API_CONVERSATION_HISTORY[sender] = history[-10:]
             return cleaned
+        elif has_images and res.status_code in (400, 422):
+            log(f"⚠️ [多模态视觉受阻 HTTP {res.status_code}] 当前模型 ({model}) 可能不支持图片输入：{res.text[:120]}")
+            if (message_content or "").strip():
+                log("↩️ [自动降级] 已自动退回纯文本模式重试回复...")
+                messages[-1] = {"role": "user", "content": message_content}
+                res2 = requests.post(url, headers=headers, json={"model": model, "messages": messages, "temperature": temperature}, timeout=12)
+                if res2.status_code == 200:
+                    cleaned = clean_ai_reply(res2.json()["choices"][0]["message"]["content"])
+                    history.append({"role": "user", "content": message_content})
+                    history.append({"role": "assistant", "content": cleaned})
+                    API_CONVERSATION_HISTORY[sender] = history[-10:]
+                    return cleaned
         else:
             log(f"⚠️ [API HTTP {res.status_code}] {res.text[:100]}")
     except Exception as e:
@@ -1143,74 +1174,146 @@ def scan_and_reply_wechat(hwnd):
             current_active_target = re.split(r'\s+', clean_green, maxsplit=1)[0].strip()
     
     if current_active_target:
-        chat_bubbles = parse_chat_bubbles_chromatic(res, img_wechat, layout, ignored_keywords)
-        if chat_bubbles:
-            pending_bubbles, combined_text = extract_pending_incoming_messages(chat_bubbles)
-            # 🔥 第一道铁闸：只要当前好友有未回复新消息，绝对锁定在当前窗口就地秒回！
-            if pending_bubbles and combined_text:
-                current_sig = (current_active_target, combined_text, int(pending_bubbles[-1]['last_y']), len(chat_bubbles))
-                if LAST_PROCESSED_SIGNATURE.get(current_active_target) != current_sig:
-                    
-                    # 🌟 极速动态像素沉降判定 (Dynamic Pixel Settling):
-                    # 短暂等待 0.35 秒 (人类打字发句最小停顿)，若右侧气泡像素无变动，立即判定单句发送完毕，0秒多余等待直接交由 AI！
-                    # 若检测到右侧像素哈希发生改变（连发新气泡），则等待 0.15 秒排版沉降后增量 OCR 聚合全部短句！
-                    time.sleep(0.35)
-                    img_latest, _, _ = grab_wechat_window(hwnd)
-                    if img_latest:
-                        latest_patch = np.array(img_latest)[crop_y1:crop_y2, crop_x1:crop_x2]
-                        new_chat_hash = hashlib.md5(latest_patch.tobytes()).hexdigest()
-                        if new_chat_hash != curr_chat_hash:
-                            time.sleep(0.15) # 等待微信 Qt5 文字渲染排版彻底完成
-                            img_settled, _, _ = grab_wechat_window(hwnd)
-                            if img_settled:
-                                img_chat_crop_lat = img_settled.crop((crop_x1, crop_y1, crop_x2, crop_y2))
-                                res_lat_raw, _ = ocr_engine(img_chat_crop_lat)
-                                res_lat = []
-                                for b, txt, sc in (res_lat_raw or []):
-                                    res_lat.append(([[pt[0] + crop_x1, pt[1] + crop_y1] for pt in b], txt, sc))
-                                chat_bubbles_lat = parse_chat_bubbles_chromatic(res_lat, img_settled, layout, ignored_keywords)
-                                pending_lat, combined_lat = extract_pending_incoming_messages(chat_bubbles_lat)
-                                if pending_lat and combined_lat:
-                                    pending_bubbles = pending_lat
-                                    combined_text = combined_lat
-                                    current_sig = (current_active_target, combined_text, int(pending_bubbles[-1]['last_y']), len(chat_bubbles_lat))
-                            
-                    log(f"\n📩 [当前会话锁定·连发聚合] 收到当前好友【{current_active_target}】新消息({len(pending_bubbles)}条): \"{combined_text}\"")
-                    ai_reply = generate_ai_reply(current_active_target, combined_text)
-                    if ai_reply:
-                        prefix = cfg.get("reply_prefix", "") if cfg.get("include_prefix", False) else ""
-                        final_reply = f"{prefix}{ai_reply}"
+        enable_image_vision = bool(cfg.get("enable_image_vision", True))
+        enable_voice_to_text = bool(cfg.get("enable_voice_to_text", False))
+
+        chat_bubbles = parse_chat_bubbles_chromatic(
+            res, img_wechat, layout, ignored_keywords,
+            skip_voice_duration=enable_voice_to_text
+        )
+
+        # 🎙️ 步骤 A: 语音自动转文字（仅当开启且存在未转写的左侧语音气泡时安全触发）
+        if mv_engine is not None and enable_voice_to_text:
+            try:
+                now_v = time.time()
+                # 清理 5 分钟前的语音去重缓存
+                expired_keys = [k for k, ts in VOICE_CONVERTED_CACHE.items() if now_v - ts > 300]
+                for ek in expired_keys:
+                    VOICE_CONVERTED_CACHE.pop(ek, None)
+
+                pending_voices = mv_engine.detect_pending_voice_bubbles(res, img_wechat, layout, chat_bubbles)
+                for vc in pending_voices:
+                    v_key = (current_active_target, int(vc["cy"] // 25), vc["duration"])
+                    if v_key in VOICE_CONVERTED_CACHE:
+                        continue
+                    VOICE_CONVERTED_CACHE[v_key] = now_v
+                    ok_v = mv_engine.trigger_voice_to_text_safe(hwnd, vc, ocr_engine, grab_wechat_window, log)
+                    if ok_v:
+                        LAST_CHAT_HASH = None
+                        LAST_FULL_SCAN_TIME = 0
+                        return
+            except Exception as e:
+                log(f"⚠️ [语音识别异常，已跳过] {e}")
+
+        pending_bubbles, combined_text = extract_pending_incoming_messages(chat_bubbles) if chat_bubbles else ([], "")
+        pending_images = []
+        if mv_engine is not None and enable_image_vision:
+            try:
+                pending_images = mv_engine.detect_pending_image_bubbles(img_wechat, layout, res, chat_bubbles)
+                if pending_images and pending_bubbles:
+                    # 屏蔽落入图片/截图内部的零碎 OCR 文字，交给视觉模型整体看图
+                    pending_bubbles = mv_engine.filter_text_bubbles_overlapping_images(pending_bubbles, pending_images)
+                    combined_text = "，".join(b["text"].strip() for b in pending_bubbles if b["text"].strip())
+            except Exception as e:
+                log(f"⚠️ [图片检测异常，已降级纯文本] {e}")
+                pending_images = []
+
+        # 若微信语音转文字失败提示出现在消息里，转为自然对话提示
+        if combined_text and mv_engine is not None and any(h in combined_text for h in mv_engine.VOICE_FAIL_HINTS):
+            combined_text = "（好友发来一段语音但系统无法识别语音内容，请用主人自然口语礼貌告诉对方刚那条语音没听清、让打字说一下）"
+
+        has_pending_msg = bool((pending_bubbles and combined_text) or pending_images)
+        # 🔥 第一道铁闸：只要当前好友有未回复新消息（文字或图片），绝对锁定在当前窗口就地秒回！
+        if has_pending_msg:
+            def _make_sig(p_bubbles, c_text, p_imgs, all_b_cnt):
+                if p_imgs:
+                    img_hashes = tuple(im["img_hash"] for im in p_imgs)
+                    ys = ([int(p_bubbles[-1]["last_y"])] if p_bubbles else [0]) + [int(im["last_y"]) for im in p_imgs]
+                    last_y_val = max(ys)
+                    return ("IMG", current_active_target, c_text, img_hashes, last_y_val)
+                return (current_active_target, c_text, int(p_bubbles[-1]["last_y"]), all_b_cnt)
+
+            current_sig = _make_sig(pending_bubbles, combined_text, pending_images, len(chat_bubbles))
+            if LAST_PROCESSED_SIGNATURE.get(current_active_target) != current_sig:
+                
+                # 🌟 极速动态像素沉降判定 (Dynamic Pixel Settling):
+                # 短暂等待 0.35 秒 (人类打字发句最小停顿)，若右侧气泡像素无变动，立即判定发送完毕直接交由 AI！
+                # 若检测到右侧像素哈希发生改变（连发新气泡或图文连发），等待 0.15 秒沉降后增量聚合！
+                time.sleep(0.35)
+                img_latest, _, _ = grab_wechat_window(hwnd)
+                if img_latest:
+                    latest_patch = np.array(img_latest)[crop_y1:crop_y2, crop_x1:crop_x2]
+                    new_chat_hash = hashlib.md5(latest_patch.tobytes()).hexdigest()
+                    if new_chat_hash != curr_chat_hash:
+                        time.sleep(0.15) # 等待微信 Qt5 文字渲染排版彻底完成
+                        img_settled, _, _ = grab_wechat_window(hwnd)
+                        if img_settled:
+                            img_chat_crop_lat = img_settled.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+                            res_lat_raw, _ = ocr_engine(img_chat_crop_lat)
+                            res_lat = []
+                            for b, txt, sc in (res_lat_raw or []):
+                                res_lat.append(([[pt[0] + crop_x1, pt[1] + crop_y1] for pt in b], txt, sc))
+                            chat_bubbles_lat = parse_chat_bubbles_chromatic(
+                                res_lat, img_settled, layout, ignored_keywords,
+                                skip_voice_duration=enable_voice_to_text
+                            )
+                            pending_lat, combined_lat = extract_pending_incoming_messages(chat_bubbles_lat) if chat_bubbles_lat else ([], "")
+                            imgs_lat = []
+                            if mv_engine is not None and enable_image_vision:
+                                try:
+                                    imgs_lat = mv_engine.detect_pending_image_bubbles(img_settled, layout, res_lat, chat_bubbles_lat)
+                                    if imgs_lat and pending_lat:
+                                        pending_lat = mv_engine.filter_text_bubbles_overlapping_images(pending_lat, imgs_lat)
+                                        combined_lat = "，".join(b["text"].strip() for b in pending_lat if b["text"].strip())
+                                except Exception:
+                                    imgs_lat = []
+                            if (pending_lat and combined_lat) or imgs_lat:
+                                pending_bubbles = pending_lat
+                                combined_text = combined_lat
+                                pending_images = imgs_lat
+                                current_sig = _make_sig(pending_bubbles, combined_text, pending_images, len(chat_bubbles_lat))
                         
-                        # 拟人打字思考延迟 (防高频回复)
-                        reply_delay = cfg_float(cfg, "reply_delay_seconds", 0.0)
-                        if reply_delay > 0:
-                            time.sleep(reply_delay)
-                            
-                        # 执行发送
-                        success = send_reply_instant(hwnd, rect, layout, current_active_target, final_reply)
-                        if success:
+                if pending_images and combined_text:
+                    log(f"\n📩 [当前会话锁定·图文聚合] 收到好友【{current_active_target}】消息({len(pending_bubbles)}条文字 + {len(pending_images)}张图片): \"{combined_text}\"")
+                elif pending_images:
+                    log(f"\n🖼️ [当前会话锁定·图片识别] 收到好友【{current_active_target}】发来的 {len(pending_images)} 张图片/表情包")
+                else:
+                    log(f"\n📩 [当前会话锁定·连发聚合] 收到当前好友【{current_active_target}】新消息({len(pending_bubbles)}条): \"{combined_text}\"")
+                ai_reply = generate_ai_reply(current_active_target, combined_text, images=pending_images)
+                if ai_reply:
+                    prefix = cfg.get("reply_prefix", "") if cfg.get("include_prefix", False) else ""
+                    final_reply = f"{prefix}{ai_reply}"
+                    
+                    # 拟人打字思考延迟 (防高频回复)
+                    reply_delay = cfg_float(cfg, "reply_delay_seconds", 0.0)
+                    if reply_delay > 0:
+                        time.sleep(reply_delay)
+                        
+                    # 执行发送
+                    success = send_reply_instant(hwnd, rect, layout, current_active_target, final_reply)
+                    if success:
+                        LAST_PROCESSED_SIGNATURE[current_active_target] = current_sig
+                        SEND_FAIL_RETRY.pop(current_sig, None)
+                    else:
+                        fail_count = SEND_FAIL_RETRY.get(current_sig, 0) + 1
+                        SEND_FAIL_RETRY[current_sig] = fail_count
+                        if fail_count >= 2:
+                            # 连续 2 次发送脱靶（如微信窗口遮挡或最小化），锁定签名放弃以防重试风暴无限消耗 API 额度
                             LAST_PROCESSED_SIGNATURE[current_active_target] = current_sig
                             SEND_FAIL_RETRY.pop(current_sig, None)
+                            log(f"🚫 [重试超限熔断] 好友【{current_active_target}】消息连续 2 次发送脱靶，已放弃该条回复以防死循环。")
                         else:
-                            fail_count = SEND_FAIL_RETRY.get(current_sig, 0) + 1
-                            SEND_FAIL_RETRY[current_sig] = fail_count
-                            if fail_count >= 2:
-                                # 连续 2 次发送脱靶（如微信窗口遮挡或最小化），锁定签名放弃以防重试风暴无限消耗 API 额度
-                                LAST_PROCESSED_SIGNATURE[current_active_target] = current_sig
-                                SEND_FAIL_RETRY.pop(current_sig, None)
-                                log(f"🚫 [重试超限熔断] 好友【{current_active_target}】消息连续 2 次发送脱靶，已放弃该条回复以防死循环。")
-                            else:
-                                log(f"⚠️ [发送脱靶记录] 好友【{current_active_target}】第 {fail_count} 次发送未成，将在下个心跳周期进行 1 次补偿重试。")
-                    else:
-                        # 生成回复为空（如未填 Key 或 API 异常），记录告警并登记签名防空转
-                        log(f"⚠️ [AI生成跳过] 好友【{current_active_target}】消息未获得有效AI回复 (API超时/网络抖动或未配Key)，登记签名防空转。")
-                        LAST_PROCESSED_SIGNATURE[current_active_target] = current_sig
+                            log(f"⚠️ [发送脱靶记录] 好友【{current_active_target}】第 {fail_count} 次发送未成，将在下个心跳周期进行 1 次补偿重试。")
+                else:
+                    # 生成回复为空（如未填 Key 或 API 异常），记录告警并登记签名防空转
+                    log(f"⚠️ [AI生成跳过] 好友【{current_active_target}】消息未获得有效AI回复 (API超时/网络抖动或未配Key)，登记签名防空转。")
+                    LAST_PROCESSED_SIGNATURE[current_active_target] = current_sig
 
-                    # 本次已处理新消息，返回结束本轮调度
-                    return
-                elif current_sig in SEND_FAIL_RETRY:
-                    # 处于重试等待中，坚守当前窗口
-                    return
+                # 本次已处理新消息，返回结束本轮调度
+                return
+            elif current_sig in SEND_FAIL_RETRY:
+                # 处于重试等待中，坚守当前窗口
+                return
 
     # -------------------------------------------------------------------------
     # 协同通道 B: 只有确认当前会话已彻底回完(最新为我发出的绿底)，才极速切入其他白名单好友红点

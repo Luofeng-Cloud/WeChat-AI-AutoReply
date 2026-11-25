@@ -50,5 +50,7 @@
         "direct_threshold": 3000,
         "top_k": 3,
         "max_context_chars": 1800
-    }
+    },
+    "enable_image_vision": true,
+    "enable_voice_to_text": false
 }
