@@ -7,14 +7,12 @@
 *100% 物理鼠标 0 移动 · 虚拟离屏隐形挂载 · 毫秒级视觉双轨感知 · 白名单硬核物理防火墙*
 
 <p align="center">
-  <a href="https://github.com/Luofeng-Cloud/WeChat-AI-AutoReply/releases/latest">
-    <img src="https://img.shields.io/badge/Release-v1.2.0-brightgreen?style=flat-square" alt="Release">
-  </a>
+  <img src="https://img.shields.io/badge/Version-v1.2.0-brightgreen?style=flat-square" alt="Version">
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6?logo=windows&style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/WeChat-3.x%20%7C%204.x%20Qt-07C160?logo=wechat&style=flat-square" alt="WeChat">
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&style=flat-square" alt="Python">
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-orange?style=flat-square" alt="License">
+    <img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License">
   </a>
 </p>
 
@@ -137,7 +135,7 @@ WeChat-AI-AutoReply/
 ├── .env.example                  # 环境变量配置模板
 ├── requirements.txt              # Python 依赖清单
 ├── .gitignore                    # 工业级排除规则 (严防私密配置、知识库与日志外泄)
-├── LICENSE                       # MIT 开源许可证
+├── LICENSE                       # Apache-2.0 开源许可证
 └── README.md                     # 项目说明文档
 ```
 
@@ -153,4 +151,4 @@ WeChat-AI-AutoReply/
 
 ## 📄 开源许可证 (License)
 
-本项目基于 [MIT License](LICENSE) 许可协议开源。
+本项目基于 [Apache License 2.0](LICENSE) 许可协议开源。
